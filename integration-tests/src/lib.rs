@@ -171,7 +171,7 @@ impl Tester {
             address: status_address,
         };
 
-        let config = Config {
+        let mut config = Config {
             general_config,
             genesis_config: GenesisConfig {
                 genesis_input_path: Some(
@@ -195,6 +195,13 @@ impl Tester {
             observability_config: Default::default(),
             gas_adjuster_config: Default::default(),
             batch_verification_config: Default::default(),
+        };
+        if enable_prover {
+            config.sequencer_config.block_time = Duration::from_secs(3600);
+            config.sequencer_config.max_transactions_in_block = 1000000;
+            config.sequencer_config.block_pubdata_limit_bytes = 100000000;
+            config.l1_sender_config.max_priority_fee_per_gas_gwei = 0;
+            config.sequencer_config.block_gas_limit = 2000000000;
         };
         let main_task = tokio::task::spawn(async move {
             zksync_os_server::run::<FullDiffsState>(stop_receiver, config).await;
