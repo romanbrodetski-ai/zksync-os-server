@@ -78,6 +78,7 @@ pub struct Genesis {
     zk_chain: ZkChain<DynProvider>,
     state: OnceCell<GenesisState>,
     genesis_upgrade_tx: OnceCell<GenesisUpgradeTxInfo>,
+    chain_id: u64,
 }
 
 impl Debug for Genesis {
@@ -92,18 +93,23 @@ impl Debug for Genesis {
 }
 
 impl Genesis {
-    pub fn new(input_source: Arc<dyn GenesisInputSource>, zk_chain: ZkChain<DynProvider>) -> Self {
+    pub fn new(
+        input_source: Arc<dyn GenesisInputSource>,
+        zk_chain: ZkChain<DynProvider>,
+        chain_id: u64,
+    ) -> Self {
         Self {
             input_source,
             zk_chain,
             state: OnceCell::new(),
             genesis_upgrade_tx: OnceCell::new(),
+            chain_id,
         }
     }
 
     pub async fn state(&self) -> &GenesisState {
         self.state
-            .get_or_try_init(|| build_genesis(self.input_source.as_ref()))
+            .get_or_try_init(|| build_genesis(self.input_source.as_ref(), self.chain_id))
             .await
             .expect("Failed to build genesis state")
     }
@@ -151,90 +157,10 @@ fn account_properties_flat_key(address: Address) -> B256 {
     flat_storage_key_for_contract(ACCOUNT_PROPERTIES_STORAGE_ADDRESS.to_be_bytes().into(), bytes.into())
 }
 
-// fn encode(&self, out: &mut dyn BufMut) {
-//     let list_header =
-//         alloy_rlp::Header { list: true, payload_length: self.header_payload_length() };
-//     list_header.encode(out);
-//     self.parent_hash.encode(out);
-//     self.ommers_hash.encode(out);
-//     self.beneficiary.encode(out);
-//     self.state_root.encode(out);
-//     self.transactions_root.encode(out);
-//     self.receipts_root.encode(out);
-//     self.logs_bloom.encode(out);
-//     self.difficulty.encode(out);
-//     U256::from(self.number).encode(out);
-//     U256::from(self.gas_limit).encode(out);
-//     U256::from(self.gas_used).encode(out);
-//     self.timestamp.encode(out);
-//     self.extra_data.encode(out);
-//     self.mix_hash.encode(out);
-//     self.nonce.encode(out);
-
-//     // Encode all the fork specific fields
-//     if let Some(ref base_fee) = self.base_fee_per_gas {
-//         U256::from(*base_fee).encode(out);
-//     }
-
-//     if let Some(ref root) = self.withdrawals_root {
-//         root.encode(out);
-//     }
-
-//     if let Some(ref blob_gas_used) = self.blob_gas_used {
-//         U256::from(*blob_gas_used).encode(out);
-//     }
-
-//     if let Some(ref excess_blob_gas) = self.excess_blob_gas {
-//         U256::from(*excess_blob_gas).encode(out);
-//     }
-
-//     if let Some(ref parent_beacon_block_root) = self.parent_beacon_block_root {
-//         parent_beacon_block_root.encode(out);
-//     }
-
-//     if let Some(ref requests_hash) = self.requests_hash {
-//         requests_hash.encode(out);
-//     }
-// }
-
-
-// #[test]
-// fn test_empty_block_hash() {
-    
-//     let header = Header {
-//         parent_hash: B256::ZERO,
-//         ommers_hash: EMPTY_OMMER_ROOT_HASH,
-//         beneficiary: Address::ZERO,
-//         // for now state root is zero
-//         state_root: B256::ZERO,
-//         transactions_root: B256::ZERO,
-//         receipts_root: B256::ZERO,
-//         logs_bloom: Bloom::ZERO,
-//         difficulty: U256::ZERO,
-//         number: 0,
-//         gas_limit: 5_000,
-//         gas_used: 0,
-//         timestamp: 0,
-//         extra_data: Default::default(),
-//         mix_hash: B256::ZERO,
-//         nonce: B64::ZERO,
-//         base_fee_per_gas: Some(INITIAL_BASE_FEE),
-//         withdrawals_root: None,
-//         blob_gas_used: None,
-//         excess_blob_gas: None,
-//         parent_beacon_block_root: None,
-//         requests_hash: None,
-//     };
-
-//     let mut out = Vec::new();
-//     header.encode(&mut out);
-
-//     println!("{:#?}", header.hash_slow());
-//     println!("{}", hex::encode(&out));
-// }
-
-
-async fn build_genesis(genesis_input_source: &dyn GenesisInputSource) -> anyhow::Result<GenesisState> {
+async fn build_genesis(
+    genesis_input_source: &dyn GenesisInputSource,
+    chain_id: u64,
+) -> anyhow::Result<GenesisState> {
     let genesis_input = genesis_input_source.genesis_input().await?;
 
     // BTreeMap is used to ensure that the storage logs are sorted by key, so that the order is deterministic
@@ -351,8 +277,7 @@ async fn build_genesis(genesis_input_source: &dyn GenesisInputSource) -> anyhow:
     };
 
     let context = BlockContext {
-        // todo: This shouldn't matter for genesis, right? maybe populate anyways
-        chain_id: 0,
+        chain_id,
         block_number: 0,
         block_hashes: Default::default(),
         timestamp: 0,
@@ -364,6 +289,7 @@ async fn build_genesis(genesis_input_source: &dyn GenesisInputSource) -> anyhow:
         pubdata_limit: 100_000_000,
         mix_hash: U256::ZERO,
         execution_version: genesis_input.execution_version,
+        blob_fee: U256::ZERO,
     };
 
     Ok(GenesisState {

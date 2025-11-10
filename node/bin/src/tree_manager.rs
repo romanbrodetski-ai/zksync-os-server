@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use vise::{Buckets, Gauge, Histogram, Metrics, Unit};
+use zksync_os_batch_types::BlockMerkleTreeData;
 use zksync_os_genesis::Genesis;
 use zksync_os_interface::types::BlockOutput;
 use zksync_os_merkle_tree::{
@@ -14,10 +15,6 @@ use zksync_os_merkle_tree::{
 use zksync_os_observability::{ComponentStateReporter, GenericComponentState};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 use zksync_os_rocksdb::{RocksDB, RocksDBOptions, StalledWritesRetries};
-pub struct BlockMerkleTreeData {
-    pub block_start: MerkleTreeVersion,
-    pub block_end: MerkleTreeVersion,
-}
 
 #[derive(Debug)]
 pub(crate) struct TreeManager {
@@ -58,54 +55,53 @@ impl PipelineComponent for TreeManager {
             let started_at = Instant::now();
             let block_number = block_output.header.number;
 
-            //todo: delegate idempotency logic to Pipeline Framework level
             if block_number <= last_processed_block {
-                tracing::debug!(
-                    "not applying block {} to the tree as it's already processed",
-                    block_number
-                )
-            } else {
-                tracing::debug!(
-                    "Processing {} storage writes in tree for block {}",
-                    block_output.storage_writes.len(),
-                    block_number
-                );
-
-                // Convert StorageWrite to TreeEntry
-                let tree_entries = block_output
-                    .storage_writes
-                    .iter()
-                    .map(|write| TreeEntry {
-                        key: write.key,
-                        value: write.value,
-                    })
-                    .collect::<Vec<_>>();
-
-                let count = tree_entries.len();
                 let mut tree_clone = tree.clone();
-                let tree_batch_output =
-                    tokio::task::spawn_blocking(move || tree_clone.extend(&tree_entries)).await??;
-                last_processed_block = tree
-                    .latest_version()?
-                    .expect("uninitialized tree after applying a block");
-                assert_eq!(last_processed_block, block_number);
-
-                tracing::debug!(
-                    block_number = block_number,
-                    next_free_slot = tree_batch_output.leaf_count,
-                    "Processed {} entries in tree, output: {:?}",
-                    count,
-                    tree_batch_output
-                );
-
-                TREE_METRICS
-                    .entry_time
-                    .observe(started_at.elapsed().div(count as u32));
-                TREE_METRICS.unique_leafs.set(tree_batch_output.leaf_count);
-                TREE_METRICS.block_time.observe(started_at.elapsed());
-
-                TREE_METRICS.processing_range.observe(count as u64);
+                tokio::task::spawn_blocking(move || {
+                    tree_clone.truncate_recent_versions(block_number)
+                })
+                .await??;
             }
+            tracing::debug!(
+                "Processing {} storage writes in tree for block {}",
+                block_output.storage_writes.len(),
+                block_number
+            );
+
+            // Convert StorageWrite to TreeEntry
+            let tree_entries = block_output
+                .storage_writes
+                .iter()
+                .map(|write| TreeEntry {
+                    key: write.key,
+                    value: write.value,
+                })
+                .collect::<Vec<_>>();
+
+            let count = tree_entries.len();
+            let mut tree_clone = tree.clone();
+            let tree_batch_output =
+                tokio::task::spawn_blocking(move || tree_clone.extend(&tree_entries)).await??;
+            last_processed_block = tree
+                .latest_version()?
+                .expect("uninitialized tree after applying a block");
+            assert_eq!(last_processed_block, block_number);
+
+            tracing::debug!(
+                block_number = block_number,
+                next_free_slot = tree_batch_output.leaf_count,
+                "Processed {} entries in tree, output: {:?}",
+                count,
+                tree_batch_output
+            );
+
+            TREE_METRICS
+                .entry_time
+                .observe(started_at.elapsed().div(count.max(1) as u32));
+            TREE_METRICS.unique_leafs.set(tree_batch_output.leaf_count);
+            TREE_METRICS.block_time.observe(started_at.elapsed());
+
+            TREE_METRICS.processing_range.observe(count.max(1) as u64);
             TREE_METRICS.block_number.set(block_number);
             let tree_block = BlockMerkleTreeData {
                 block_start: MerkleTreeVersion {

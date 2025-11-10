@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.10.0](https://github.com/matter-labs/zksync-os-server/compare/v0.9.2...v0.10.0) (2025-11-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* support zksync-os v0.1.0 ([#557](https://github.com/matter-labs/zksync-os-server/issues/557))
+
+### Features
+
+* add last_execution_version metric ([#590](https://github.com/matter-labs/zksync-os-server/issues/590)) ([9343794](https://github.com/matter-labs/zksync-os-server/commit/9343794c7a27bd315a7a3096591265abb961247f))
+* get rid of batch rescheduling (preparation to get rid of BatchStorage) ([#587](https://github.com/matter-labs/zksync-os-server/issues/587)) ([62dd891](https://github.com/matter-labs/zksync-os-server/commit/62dd89119749fcfe51280676bbc569e189d30626))
+* remove app_bin_unpack_path from config ([#588](https://github.com/matter-labs/zksync-os-server/issues/588)) ([e55b0d4](https://github.com/matter-labs/zksync-os-server/commit/e55b0d43f631efbc39f2a24bbb8dcb08e5474727))
+* support zksync-os v0.1.0 ([#557](https://github.com/matter-labs/zksync-os-server/issues/557)) ([178a1a9](https://github.com/matter-labs/zksync-os-server/commit/178a1a975dc682a24be5dc6d7e33733c7786f493))
+
+## [0.9.2](https://github.com/matter-labs/zksync-os-server/compare/v0.9.1...v0.9.2) (2025-11-06)
+
+
+### Features
+
+* 2FA EN batch signing without L1 verification ([#459](https://github.com/matter-labs/zksync-os-server/issues/459)) ([e6d41ab](https://github.com/matter-labs/zksync-os-server/commit/e6d41abf581e5baeeda73b8a772ab7572a8d2b2e))
+* get rid of l1_gas_pricing_multiplier ([#576](https://github.com/matter-labs/zksync-os-server/issues/576)) ([3699956](https://github.com/matter-labs/zksync-os-server/commit/36999561aa64f3af7b730e0bae8b461fd903a8b5))
+* Protocol upgrade support for provers ([#577](https://github.com/matter-labs/zksync-os-server/issues/577)) ([a60bb89](https://github.com/matter-labs/zksync-os-server/commit/a60bb89c9c7a52c166cc208b98bdf2a3644bec3c))
+* **sentry:** Use CLUSTER_NAME as environment tag ([#570](https://github.com/matter-labs/zksync-os-server/issues/570)) ([0befa23](https://github.com/matter-labs/zksync-os-server/commit/0befa239c7b6576cae986eb1e4f0398131dd17b2))
+
+
+### Bug Fixes
+
+* Consistency checker nonce for failed creates ([#574](https://github.com/matter-labs/zksync-os-server/issues/574)) ([8159d64](https://github.com/matter-labs/zksync-os-server/commit/8159d64d4dff8b1188ce45d6b45dd7e754bed3ad))
+* proving empty blocks - fix division by zero error in metrics tracking ([#584](https://github.com/matter-labs/zksync-os-server/issues/584)) ([3c7d3bd](https://github.com/matter-labs/zksync-os-server/commit/3c7d3bd3ea713dd4b71af687f1110504a767ca87))
+* set WORKDIR to /app ([#573](https://github.com/matter-labs/zksync-os-server/issues/573)) ([265dc34](https://github.com/matter-labs/zksync-os-server/commit/265dc347daba05e82d669486588a8b6980defd9f))
+
+## [0.9.1](https://github.com/matter-labs/zksync-os-server/compare/v0.9.0...v0.9.1) (2025-10-29)
+
+
+### Features
+
+* add block rebuild options ([#565](https://github.com/matter-labs/zksync-os-server/issues/565)) ([eab9bdf](https://github.com/matter-labs/zksync-os-server/commit/eab9bdfa7ec205421e55251a2213a406995bc8aa))
+
+
+### Bug Fixes
+
+* consume l1 txs processed in rebuild commands ([#568](https://github.com/matter-labs/zksync-os-server/issues/568)) ([ff74bec](https://github.com/matter-labs/zksync-os-server/commit/ff74bece2252626782d31fd9358ce41ed5289649))
+
+## [0.9.0](https://github.com/matter-labs/zksync-os-server/compare/v0.8.4...v0.9.0) (2025-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* Opentelemetry support + config schema change ([#559](https://github.com/matter-labs/zksync-os-server/issues/559))
+
+### Features
+
+* eth_estimateGas state overrides ([#560](https://github.com/matter-labs/zksync-os-server/issues/560)) ([44a2281](https://github.com/matter-labs/zksync-os-server/commit/44a228151fb814d122b9afb75e88e980176c9902))
+* Opentelemetry support + config schema change ([#559](https://github.com/matter-labs/zksync-os-server/issues/559)) ([592d6bb](https://github.com/matter-labs/zksync-os-server/commit/592d6bb080c561687f6f39a4c18badf27df640cf))
+* pubdata price calculation ([#549](https://github.com/matter-labs/zksync-os-server/issues/549)) ([d1700ba](https://github.com/matter-labs/zksync-os-server/commit/d1700babcb7ac5cf4519a2771941050dc217a870))
+* revm consistency checker ([#525](https://github.com/matter-labs/zksync-os-server/issues/525)) ([2061a01](https://github.com/matter-labs/zksync-os-server/commit/2061a01f2ae09923b00b33f1705d36ea7b62feb5))
+
 ## [0.8.4](https://github.com/matter-labs/zksync-os-server/compare/v0.8.3...v0.8.4) (2025-10-21)
 
 

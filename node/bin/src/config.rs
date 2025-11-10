@@ -1,15 +1,23 @@
+use crate::command_source::RebuildOptions;
+use alloy::consensus::constants::GWEI_TO_WEI;
 use alloy::primitives::Address;
 use serde::{Deserialize, Serialize};
 use smart_config::metadata::TimeUnit;
 use smart_config::value::SecretString;
-use smart_config::{DescribeConfig, DeserializeConfig, Serde, de::Optional};
+use smart_config::{
+    DescribeConfig, DeserializeConfig, Serde,
+    de::{Delimited, Optional},
+};
 use std::{path::PathBuf, time::Duration};
+use zksync_os_batch_verification;
+use zksync_os_contract_interface::models::BatchDaInputMode;
 use zksync_os_l1_sender::commands::commit::CommitCommand;
 use zksync_os_l1_sender::commands::execute::ExecuteCommand;
 use zksync_os_l1_sender::commands::prove::ProofCommand;
 use zksync_os_mempool::SubPoolLimit;
 use zksync_os_object_store::ObjectStoreConfig;
-use zksync_os_tracing::LogFormat;
+use zksync_os_observability::LogFormat;
+use zksync_os_observability::opentelemetry::OpenTelemetryLevel;
 
 /// Configuration for the sequencer node.
 /// Includes configurations of all subsystems.
@@ -28,7 +36,9 @@ pub struct Config {
     pub prover_input_generator_config: ProverInputGeneratorConfig,
     pub prover_api_config: ProverApiConfig,
     pub status_server_config: StatusServerConfig,
-    pub log_config: LogConfig,
+    pub observability_config: ObservabilityConfig,
+    pub gas_adjuster_config: GasAdjusterConfig,
+    pub batch_verification_config: BatchVerificationConfig,
 }
 
 /// "Umbrella" config for the node.
@@ -49,24 +59,15 @@ pub struct GeneralConfig {
     pub min_blocks_to_replay: usize,
 
     /// Force a block number to start replaying from.
-    /// For Compacted backend it can either be `0` or `last_compacted_block + 1`.
-    /// For FullDiffs backend:
+    /// Only FullDiffs backend is supported:
     ///     On EN: can be any historical block number;
-    ///     On Main Node: any historical block number up to the last l1 committed one.
+    ///     On Main Node: any historical block number up to the last l1 executed one.
     #[config(default_t = None)]
     pub force_starting_block_number: Option<u64>,
 
     /// Path to the directory for persistence (eg RocksDB) - will contain both state and repositories' DBs
     #[config(default_t = "./db/node1".into())]
     pub rocks_db_path: PathBuf,
-
-    /// Prometheus address to listen on.
-    #[config(default_t = 3312)]
-    pub prometheus_port: u16,
-
-    /// Sentry URL.
-    #[config(default_t = None)]
-    pub sentry_url: Option<String>,
 
     /// State backend to use. When changed, a replay of all blocks may be needed.
     #[config(default_t = StateBackendConfig::FullDiffs)]
@@ -124,6 +125,19 @@ pub struct StatusServerConfig {
 }
 
 #[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
+pub struct RebuildBlocksConfig {
+    /// Number of the block to start rebuilding from.
+    /// All blocks starting from this number will be replayed - but unlike normal replay,
+    /// we'll not assert that the result will match the original ReplayRecord (block).
+    /// That is, a block may close earlier (with less transactions),
+    /// have different hash, have some transactions rejected etc
+    pub from_block: u64,
+    /// List of blocks to empty (i.e., remove all transactions from).
+    #[config(default, with = Delimited(","))]
+    pub blocks_to_empty: Vec<u64>,
+}
+
+#[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
 #[config(derive(Default))]
 pub struct SequencerConfig {
     /// Where to download replays instead of actually running blocks.
@@ -164,10 +178,13 @@ pub struct SequencerConfig {
     pub fee_collector_address: Address,
 
     /// Override for base fee (in wei). If set, base fee will be constant and equal to this value.
-    pub base_fee_override: Option<u64>,
+    pub base_fee_override: Option<u128>,
 
     /// Override for pubdata price (in wei). If set, pubdata price will be constant and equal to this value.
-    pub pubdata_price_override: Option<u64>,
+    pub pubdata_price_override: Option<u128>,
+
+    /// Override for native price (in wei). If set, native price will be constant and equal to this value.
+    pub native_price_override: Option<u128>,
 
     /// Maximum number of blocks to produce.
     /// `None` means unlimited (default, standard operations),
@@ -178,6 +195,19 @@ pub struct SequencerConfig {
     /// Useful for mitigation/operations.
     #[config(default_t = None)]
     pub max_blocks_to_produce: Option<u64>,
+
+    /// Enable REVM consistency checker.
+    /// If enabled, an additional pipeline process will be executed after the sequencer.
+    /// The process re-executes transactions on the REVM client and checks state diff consistency.
+    /// If the state diffs are inconsistent, a warning or debug message will be logged, but it won't crash.
+    /// The consistency checker propagates the output to the next pipeline item, so it is not a
+    /// blocking process and the overhead should be small.
+    #[config(default_t = false)]
+    pub revm_consistency_checker_enabled: bool,
+
+    /// Block rebuild options.
+    #[config(nest)]
+    pub block_rebuild: Option<RebuildBlocksConfig>,
 }
 
 impl SequencerConfig {
@@ -220,6 +250,12 @@ pub struct RpcConfig {
     /// Duration since the last filter poll, after which the filter is considered stale
     #[config(default_t = 15 * TimeUnit::Minutes)]
     pub stale_filter_ttl: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum RollupPubdataMode {
+    Blobs,
+    Calldata,
 }
 
 /// Only used on the Main Node.
@@ -266,6 +302,11 @@ pub struct L1SenderConfig {
     /// the node will eventually halt as produced batches are not processed further.
     #[config(default_t = true)]
     pub enabled: bool,
+
+    /// Rollup pubdata mode - either blobs or calldata.
+    #[config(default_t = RollupPubdataMode::Calldata)]
+    #[config(with = Serde![str])]
+    pub rollup_pubdata_mode: RollupPubdataMode,
 }
 
 #[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
@@ -330,16 +371,6 @@ pub struct ProverInputGeneratorConfig {
     /// The batcher will wait for block N to finish before starting block N + maximum_in_flight_blocks.
     #[config(default_t = 16)]
     pub maximum_in_flight_blocks: usize,
-
-    /// Normally, the Prover input generator skips the blocks that are already FRI proved and committed to L1.
-    /// When this option is enabled, it will reprocess all the blocks replayed by the node on startup.
-    /// The number of blocks to replay on startup is configurable via `min_blocks_to_replay`.
-    #[config(default_t = false)]
-    pub force_process_old_blocks: bool,
-
-    /// Path to the directory where RiscV binaries are unpacked (server_app.bin, app_data.bin, etc)
-    #[config(default_t = "./db/app_bins".into())]
-    pub app_bin_unpack_path: PathBuf,
 }
 
 /// Only used on the Main Node.
@@ -418,6 +449,48 @@ pub struct FakeSnarkProversConfig {
     pub max_batch_age: Duration,
 }
 
+/// Set of options related to the observability stack,
+/// e.g. logging, metrics, tracing, error tracking, etc.
+#[derive(Debug, Clone, PartialEq, DescribeConfig, DeserializeConfig)]
+#[config(derive(Default))]
+pub struct ObservabilityConfig {
+    /// Configuration for Prometheus metrics.
+    #[config(nest, default)]
+    pub prometheus: PrometheusConfig,
+
+    /// Configuration for Sentry error tracking.
+    #[config(nest, default)]
+    pub sentry: SentryConfig,
+
+    /// Configuration for the logging stack.
+    #[config(nest, default)]
+    pub log: LogConfig,
+
+    /// Configuration for the opentelemetry stack.
+    #[config(nest, default)]
+    pub otlp: OtlpConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, DescribeConfig, DeserializeConfig)]
+#[config(derive(Default))]
+pub struct PrometheusConfig {
+    /// Port to expose Prometheus metrics on.
+    #[config(default_t = 3312)]
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, DescribeConfig, DeserializeConfig)]
+#[config(derive(Default))]
+pub struct SentryConfig {
+    /// Sentry DSN URL.
+    #[config(default_t = None)]
+    pub dsn_url: Option<String>,
+
+    /// Environment name for Sentry.
+    #[config(default_t = None)]
+    pub environment: Option<String>,
+}
+
 /// Configuration for the logging stack.
 #[derive(Debug, Clone, PartialEq, DescribeConfig, DeserializeConfig)]
 #[config(derive(Default))]
@@ -430,6 +503,76 @@ pub struct LogConfig {
     /// Whether to use color in logs.
     #[config(default_t = true)]
     pub use_color: bool,
+}
+
+/// Configuration for gas adjuster.
+#[derive(Debug, Clone, PartialEq, DescribeConfig, DeserializeConfig)]
+#[config(derive(Default))]
+pub struct GasAdjusterConfig {
+    #[config(default_t = 100)]
+    pub max_base_fee_samples: usize,
+    #[config(default_t = 100)]
+    pub num_samples_for_blob_base_fee_estimate: usize,
+    #[config(default_t = 13 * TimeUnit::Seconds)]
+    pub poll_period: Duration,
+    #[config(default_t = 1.0)]
+    pub pubdata_pricing_multiplier: f64,
+}
+
+/// Configuration for the opentelemetry stack.
+#[derive(Debug, Clone, PartialEq, DescribeConfig, DeserializeConfig)]
+#[config(derive(Default))]
+pub struct OtlpConfig {
+    /// Level of spans to be exported to OpenTelemetry.
+    /// Note that it works on top of the global log level filter.
+    #[config(default)]
+    #[config(with = Serde![str])]
+    pub level: OpenTelemetryLevel,
+
+    /// Endpoint to send traces to.
+    #[config(default_t = None)]
+    pub tracing_endpoint: Option<String>,
+
+    /// Endpoint to send logs to.
+    #[config(default_t = None)]
+    pub logging_endpoint: Option<String>,
+}
+
+/// Configuration for batch verification client and server
+#[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
+#[config(derive(Default))]
+pub struct BatchVerificationConfig {
+    /// [server] If we are collecting batch verification signatures
+    #[config(default_t = false)]
+    pub server_enabled: bool,
+    /// [server] Batch verification server address to listen on.
+    #[config(default_t = "0.0.0.0:3072".into())]
+    pub listen_address: String,
+    /// [en] If we are signing batches
+    #[config(default_t = false)]
+    pub client_enabled: bool,
+    /// [en] Batch verification server address to connect to.
+    #[config(default_t = "127.0.0.1:3072".into())]
+    pub connect_address: String,
+    /// [server] Threshold (number of needed signatures)
+    #[config(default_t = 1)]
+    pub threshold: usize,
+    /// [server] Accepted signer pubkeys
+    #[config(default_t = vec!["0x36615Cf349d7F6344891B1e7CA7C72883F5dc049".into()])]
+    pub accepted_signers: Vec<String>,
+    /// [server] Iteration timeout
+    #[config(default_t = Duration::from_secs(5))]
+    pub request_timeout: Duration,
+    /// [server] Retry delay between attempts
+    #[config(default_t = Duration::from_secs(1))]
+    pub retry_delay: Duration,
+    /// [server] Total timeout
+    #[config(default_t = Duration::from_secs(300))]
+    pub total_timeout: Duration,
+    /// [en] Signing key
+    // default address 0x36615Cf349d7F6344891B1e7CA7C72883F5dc049
+    #[config(default_t = "0x7726827caac94a7f9e1b160f7ea819f172f7b6f9d2a97f992c38edeab82d4110".into())]
+    pub signing_key: SecretString,
 }
 
 impl From<RpcConfig> for zksync_os_rpc::RpcConfig {
@@ -520,5 +663,57 @@ impl From<TxValidatorConfig> for zksync_os_mempool::TxValidatorConfig {
         Self {
             max_input_bytes: c.max_input_bytes,
         }
+    }
+}
+
+impl From<RebuildBlocksConfig> for RebuildOptions {
+    fn from(c: RebuildBlocksConfig) -> Self {
+        Self {
+            rebuild_from_block: c.from_block,
+            blocks_to_empty: c.blocks_to_empty.into_iter().collect(),
+        }
+    }
+}
+
+impl From<BatchVerificationConfig> for zksync_os_batch_verification::BatchVerificationConfig {
+    fn from(c: BatchVerificationConfig) -> Self {
+        Self {
+            server_enabled: c.server_enabled,
+            listen_address: c.listen_address,
+            client_enabled: c.client_enabled,
+            connect_address: c.connect_address,
+            threshold: c.threshold,
+            accepted_signers: c.accepted_signers,
+            request_timeout: c.request_timeout,
+            retry_delay: c.retry_delay,
+            total_timeout: c.total_timeout,
+            signing_key: c.signing_key,
+        }
+    }
+}
+
+pub fn gas_adjuster_config(
+    c: GasAdjusterConfig,
+    da_input_mode: BatchDaInputMode,
+    rollup_pubdata_mode: RollupPubdataMode,
+    max_priority_fee_per_gas_gwei: u64,
+) -> zksync_os_gas_adjuster::GasAdjusterConfig {
+    let pubdata_mode = match (da_input_mode, rollup_pubdata_mode) {
+        (BatchDaInputMode::Validium, _) => zksync_os_gas_adjuster::PubdataMode::Validium,
+        (BatchDaInputMode::Rollup, RollupPubdataMode::Blobs) => {
+            zksync_os_gas_adjuster::PubdataMode::Blobs
+        }
+        (BatchDaInputMode::Rollup, RollupPubdataMode::Calldata) => {
+            zksync_os_gas_adjuster::PubdataMode::Calldata
+        }
+    };
+    let max_priority_fee_per_gas = max_priority_fee_per_gas_gwei as u128 * (GWEI_TO_WEI as u128);
+    zksync_os_gas_adjuster::GasAdjusterConfig {
+        pubdata_mode,
+        max_base_fee_samples: c.max_base_fee_samples,
+        num_samples_for_blob_base_fee_estimate: c.num_samples_for_blob_base_fee_estimate,
+        max_priority_fee_per_gas,
+        poll_period: c.poll_period,
+        pubdata_pricing_multiplier: c.pubdata_pricing_multiplier,
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "zksync_os_tracing"
+name = "zksync_os_socket"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,9 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+backon.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
 tracing.workspace = true
-tracing-logfmt = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
-serde = { workspace = true, features = ["derive"] }
-sentry = { workspace = true, features = ["tracing"] }
-
