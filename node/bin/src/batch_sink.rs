@@ -1,5 +1,7 @@
 use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+use zksync_os_config_db::ConfigDB;
 use zksync_os_l1_sender::batcher_model::{FriProof, SignedBatchEnvelope};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 
@@ -32,6 +34,59 @@ impl PipelineComponent for BatchSink {
                 proof = ?envelope.data,
                 " ▶▶▶ Batch has been fully processed"
             );
+        }
+        anyhow::bail!("Failed to receive committed batch");
+    }
+}
+
+pub struct ConfigDBAwareBatchSink {
+    target_block_number: u64,
+    config_db: Arc<Mutex<ConfigDB>>,
+}
+
+impl ConfigDBAwareBatchSink {
+    pub fn new(target_block_number: u64, config_db: Arc<Mutex<ConfigDB>>) -> Self {
+        Self {
+            target_block_number,
+            config_db,
+        }
+    }
+}
+
+#[async_trait]
+impl PipelineComponent for ConfigDBAwareBatchSink {
+    type Input = SignedBatchEnvelope<FriProof>;
+    type Output = ();
+
+    const NAME: &'static str = "config_db_aware_batch_sink";
+    const OUTPUT_BUFFER_SIZE: usize = 1; // No output
+
+    async fn run(
+        self,
+        input: PeekableReceiver<Self::Input>,
+        _output: mpsc::Sender<Self::Output>,
+    ) -> anyhow::Result<()> {
+        let mut input = input.into_inner();
+        while let Some(envelope) = input.recv().await {
+            tracing::info!(
+                batch_number = envelope.batch_number(),
+                latency_tracker = %envelope.latency_tracker,
+                tx_count = envelope.batch.tx_count,
+                block_from = envelope.batch.first_block_number,
+                block_to = envelope.batch.last_block_number,
+                proof = ?envelope.data,
+                " ▶▶▶ Batch has been fully processed"
+            );
+            if envelope.batch.last_block_number >= self.target_block_number {
+                tracing::info!(
+                    target_block_number = self.target_block_number,
+                    "Reached target block number, clearing config DB and restarting node"
+                );
+                let db = self.config_db.lock().unwrap();
+                db.delete()?;
+
+                panic!("Restarting node to apply new configuration");
+            }
         }
         anyhow::bail!("Failed to receive committed batch");
     }

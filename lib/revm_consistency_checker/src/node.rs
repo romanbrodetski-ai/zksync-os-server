@@ -1,12 +1,12 @@
-use std::collections::HashSet;
-
 use alloy::primitives::U256;
 use async_trait::async_trait;
-use reth_revm::db::CacheDB;
-
 use reth_revm::ExecuteCommitEvm;
 use reth_revm::context::{Context, ContextTr};
+use reth_revm::db::CacheDB;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::Sender;
+use zksync_os_config_db::ConfigDB;
 use zksync_os_interface::types::BlockOutput;
 use zksync_os_observability::{ComponentStateReporter, GenericComponentState};
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
@@ -15,21 +15,45 @@ use zksync_os_storage_api::{ReadStateHistory, ReplayRecord};
 
 use crate::helpers::zk_tx_into_revm_tx;
 use crate::revm_state_provider::RevmStateProvider;
-use crate::storage_diff_comp::CompareReport;
+use crate::storage_diff_comp::{CompareReport, StorageMismatch};
 
 pub struct RevmConsistencyChecker<State>
 where
     State: ReadStateHistory + Clone + Send + 'static,
 {
     state: State,
+    config_db: Arc<Mutex<ConfigDB>>,
 }
 
 impl<State> RevmConsistencyChecker<State>
 where
     State: ReadStateHistory + Clone + Send + 'static,
 {
-    pub fn new(state: State) -> Self {
-        Self { state }
+    pub fn new(state: State, config_db: Arc<Mutex<ConfigDB>>) -> Self {
+        Self { state, config_db }
+    }
+
+    pub fn handle_report(&self, block_number: u64, report: &CompareReport) -> anyhow::Result<()> {
+        report.log_tracing(20);
+        if !report.is_empty() {
+            let config_db = self.config_db.lock().unwrap();
+            let mut config = serde_yaml::Value::Mapping(config_db.read()?);
+            let yaml = format!("
+                sequencer:
+                    block_rebuild:
+                        from_block: {block_number}
+                        blocks_to_empty: \"{block_number}\"
+                general:
+                    reset_config_db_after_block: {block_number}
+            ");
+            let yaml = serde_yaml::Value::Mapping(serde_yaml::from_str(&yaml)?);
+            merge(&mut config, &yaml);
+            config_db.write(&config.as_mapping().unwrap())?;
+
+            panic!("REVM consistency check failed for block {block_number}");
+        }
+
+        Ok(())
     }
 }
 
@@ -137,7 +161,7 @@ where
                     &block_output.storage_writes,
                     &block_output.account_diffs,
                 )?;
-                compare_report.log_tracing(20);
+                self.handle_report(replay_record.block_context.block_number, &compare_report)?;
             }
 
             latency_tracker.enter_state(GenericComponentState::WaitingSend);
@@ -148,6 +172,25 @@ where
             {
                 anyhow::bail!("Outbound channel closed");
             }
+        }
+    }
+}
+
+fn merge(a: &mut serde_yaml::Value, b: &serde_yaml::Value) {
+    match (a, b) {
+        (serde_yaml::Value::Mapping(a_map), serde_yaml::Value::Mapping(b_map)) => {
+            for (k, v_b) in b_map {
+                match a_map.get_mut(k) {
+                    Some(v_a) => merge(v_a, v_b),
+                    None => {
+                        a_map.insert(k.clone(), v_b.clone());
+                    }
+                }
+            }
+        }
+        // If not both mappings → replace a with b
+        (a_val, b_val) => {
+            *a_val = b_val.clone();
         }
     }
 }

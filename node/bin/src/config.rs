@@ -92,6 +92,11 @@ pub struct GeneralConfig {
     /// `SequencerConfig::block_replay_download_address` is the source of truth for node type. **
     #[config(default_t = None)]
     pub main_node_rpc_url: Option<String>,
+
+    #[config(default)]
+    pub config_override_db_enabled: bool,
+
+    pub reset_config_db_after_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
