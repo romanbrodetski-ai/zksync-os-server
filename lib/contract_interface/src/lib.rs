@@ -147,9 +147,9 @@ alloy::sol! {
             address l2DaValidator;
             bytes32 daCommitment;
             uint64 firstBlockTimestamp;
-            uint256 firstBlockNumber;
+            uint64 firstBlockNumber;
             uint64 lastBlockTimestamp;
-            uint256 lastBlockNumber;
+            uint64 lastBlockNumber;
             uint256 chainId;
             bytes operatorDAInput;
         }

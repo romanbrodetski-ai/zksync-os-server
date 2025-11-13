@@ -90,9 +90,11 @@ pub struct CommitBatchInfo {
     pub l2_da_validator: Address,
     pub da_commitment: B256,
     pub first_block_timestamp: u64,
-    pub first_block_number: u64,
+    // Note, that pre-zksync-os-v30 batches did not contain this field.
+    pub first_block_number: Option<u64>,
     pub last_block_timestamp: u64,
-    pub last_block_number: u64,
+    // Note, that pre-zksync-os-v30 batches did not contain this field.
+    pub last_block_number: Option<u64>,
     pub chain_id: u64,
     pub operator_da_input: Vec<u8>,
 }
@@ -109,9 +111,11 @@ impl From<CommitBatchInfo> for IExecutor::CommitBatchInfoZKsyncOS {
             value.l2_da_validator,
             value.da_commitment,
             value.first_block_timestamp,
-            U256::from(value.first_block_number),
+            // It is expected that for all the newly sent batches this field is always present.
+            value.first_block_number.unwrap(),
             value.last_block_timestamp,
-            U256::from(value.last_block_number),
+            // It is expected that for all the newly sent batches this field is always present.
+            value.last_block_number.unwrap(),
             U256::from(value.chain_id),
             Bytes::from(value.operator_da_input),
         ))
@@ -130,9 +134,9 @@ impl From<IExecutor::CommitBatchInfoZKsyncOS> for CommitBatchInfo {
             l2_da_validator: value.l2DaValidator,
             da_commitment: value.daCommitment,
             first_block_timestamp: value.firstBlockTimestamp,
-            first_block_number: value.firstBlockNumber.to::<u64>(),
+            first_block_number: Some(value.firstBlockNumber),
             last_block_timestamp: value.lastBlockTimestamp,
-            last_block_number: value.lastBlockNumber.to::<u64>(),
+            last_block_number: Some(value.lastBlockNumber),
             chain_id: value.chainId.to::<u64>(),
             operator_da_input: value.operatorDAInput.as_ref().to_vec(),
         }

@@ -177,40 +177,6 @@ async fn build_genesis(
 
         let flat_storage_key = account_properties_flat_key(address);
 
-        println!("\n\n\n\n\n===== {:#?} ====", flat_storage_key);
-        println!(
-            "versioning_data: {}",
-            hex::encode(account_properties.versioning_data.into_u64().to_be_bytes())
-        );
-        println!(
-            "nonce: {}",
-            hex::encode(account_properties.nonce.to_be_bytes())
-        );
-        println!(
-            "balance: {}",
-            hex::encode(account_properties.balance.to_be_bytes::<32>())
-        );
-        println!(
-            "bytecode_hash: {}",
-            hex::encode(account_properties.bytecode_hash.as_u8_ref())
-        );
-        println!(
-            "unpadded_code_len: {}",
-            hex::encode(account_properties.unpadded_code_len.to_be_bytes())
-        );
-        println!(
-            "artifacts_len: {}",
-            hex::encode(account_properties.artifacts_len.to_be_bytes())
-        );
-        println!(
-            "observable_bytecode_hash: {}",
-            hex::encode(account_properties.observable_bytecode_hash.as_u8_ref())
-        );
-        println!(
-            "observable_bytecode_len: {}",
-            hex::encode(account_properties.observable_bytecode_len.to_be_bytes())
-        );
-
         let account_properties_hash = account_properties.compute_hash();
         storage_logs.insert(
             flat_storage_key,
@@ -246,10 +212,6 @@ async fn build_genesis(
             }
         }
     }
-
-    let logs = storage_logs.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>();
-
-    println!("{:#?}", logs);
 
     let header = Header {
         parent_hash: B256::ZERO,

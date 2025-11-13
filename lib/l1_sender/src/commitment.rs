@@ -149,9 +149,9 @@ impl BatchInfo {
             l2_da_validator: Default::default(),
             da_commitment: operator_da_input_header_hash,
             first_block_timestamp: first_block_output.header.timestamp,
-            first_block_number: first_block_output.header.number,
+            first_block_number: Some(first_block_output.header.number),
             last_block_timestamp: last_block_output.header.timestamp,
-            last_block_number: last_block_output.header.number,
+            last_block_number: Some(last_block_output.header.number),
             chain_id,
             operator_da_input,
         };
