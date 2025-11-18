@@ -311,6 +311,7 @@ impl<T: Clone> ProverJobMap<T> {
         tracing::info!(
             batch_number,
             ?completion_stats,
+            batch_envelope.batch.tx_count,
             ?prover_type,
             prover_id,
             ?self.prover_stage,
@@ -366,6 +367,7 @@ impl<T: Clone> ProverJobMap<T> {
             tracing::info!(
                 batch_number,
                 ?completion_stats,
+                batch_envelope.batch.tx_count,
                 ?prover_type,
                 prover_id,
                 stage = ?self.prover_stage,
