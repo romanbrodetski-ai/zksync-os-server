@@ -235,7 +235,7 @@ impl FriJobManager {
         &self,
         batch_number: u64,
         proof_bytes: Bytes,
-        // TODO: migrate to ExecutionVersion, once legacy is deprecated
+        // TODO: migrate to ProvingVersion, once legacy is deprecated
         proving_version: Option<ProvingVersion>,
         prover_id: &str,
     ) -> Result<(), SubmitError> {
@@ -252,17 +252,17 @@ impl FriJobManager {
         //
         // NOTE: We don't check the actual values, but the value that server believes the prove should use.
         // NOTE2: Checking only if prover provided VK version - legacy clients will not provide it
-        if let Some(exec_version) = proving_version {
+        if let Some(proving_version) = proving_version {
             // should never panic
             let forward_run_execution_version =
                 ExecutionVersion::try_from(batch_metadata.execution_version)
                     .expect("Must be valid execution as set by the server");
             let server_proving_version =
                 ProvingVersion::from_forward_run_execution_version(forward_run_execution_version);
-            if server_proving_version != exec_version {
+            if server_proving_version != proving_version {
                 return Err(SubmitError::ProvingVersionMismatch(
                     server_proving_version,
-                    exec_version,
+                    proving_version,
                 ));
             }
         }
@@ -351,7 +351,7 @@ impl FriJobManager {
         };
         tracing::info!(batch_number, "Real proof accepted");
 
-        // get execution version from prover, if available, otherwise fallback
+        // get proving version from prover, if available, otherwise fallback
         let proving_version = if let Some(proving_version) = proving_version {
             proving_version
         } else {

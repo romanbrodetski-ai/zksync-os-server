@@ -288,7 +288,8 @@ impl ProcessL1Event for L1UpgradeTxWatcher {
                 "received a protocol version that is not marked as live"
             );
             // Only allow non-live versions in localhost environment.
-            if self.provider.get_chain_id().await? != 31337 {
+            const ANVIL_CHAIN_ID: u64 = 31337;
+            if self.provider.get_chain_id().await? != ANVIL_CHAIN_ID {
                 panic!(
                     "Received an upgrade to a non-live protocol version: {:?}",
                     request.protocol_version
@@ -318,7 +319,7 @@ impl ProcessL1Event for L1UpgradeTxWatcher {
         );
 
         self.output.send(upgrade_tx.clone()).await.map_err(|e| {
-            L1WatcherError::Batch(anyhow::anyhow!("failed to send upgrade tx: {}", e))
+            L1WatcherError::Batch(anyhow::anyhow!("failed to send upgrade tx: {e}"))
         })?;
 
         self.current_protocol_version = upgrade_tx.protocol_version;
