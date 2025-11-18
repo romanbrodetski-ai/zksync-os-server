@@ -91,6 +91,14 @@ impl SnarkJobManager {
             })
             .await;
 
+        if batches_with_real_proofs.is_empty() {
+            tracing::trace!(
+                prover_id,
+                "no SNARK prove jobs are available for pick up",
+            );
+            return Ok(None);
+        }
+
         // All jobs have the same vk_hash - guaranteed by `pick_jobs_while`
         let first_vk_hash = batches_with_real_proofs[0].0.vk_hash.clone();
 
