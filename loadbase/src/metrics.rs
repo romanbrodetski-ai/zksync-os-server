@@ -6,29 +6,22 @@ use parking_lot::{Mutex, RwLock};
 use std::{
     collections::VecDeque,
     io::Write,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::{atomic::{AtomicU64, Ordering}, Arc},
     time::{Duration, Instant},
 };
 use tokio::time::interval;
 
 /// Returns the median (p50) of a sorted slice
 fn median(vals: &[u64]) -> u64 {
-    if vals.is_empty() {
-        0
-    } else {
-        vals[vals.len() / 2]
-    }
+    if vals.is_empty() { 0 } else { vals[vals.len()/2] }
 }
 
 #[derive(Clone)]
 pub struct Metrics {
-    pub sent: Arc<AtomicU64>,
+    pub sent:     Arc<AtomicU64>,
     pub included: Arc<AtomicU64>,
-    pub submit: Arc<RwLock<Histogram<u64>>>,
-    pub include: Arc<RwLock<Histogram<u64>>>,
+    pub submit:   Arc<RwLock<Histogram<u64>>>,
+    pub include:  Arc<RwLock<Histogram<u64>>>,
     pub sub_last: Arc<Mutex<VecDeque<(Instant, u64)>>>,
     pub inc_last: Arc<Mutex<VecDeque<(Instant, u64)>>>,
 }
@@ -36,10 +29,10 @@ pub struct Metrics {
 impl Metrics {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
-            sent: Arc::new(AtomicU64::new(0)),
+            sent:     Arc::new(AtomicU64::new(0)),
             included: Arc::new(AtomicU64::new(0)),
-            submit: Arc::new(RwLock::new(Histogram::new_with_max(60_000, 3)?)),
-            include: Arc::new(RwLock::new(Histogram::new_with_max(60_000, 3)?)),
+            submit:   Arc::new(RwLock::new(Histogram::new_with_max(60_000, 3)?)),
+            include:  Arc::new(RwLock::new(Histogram::new_with_max(60_000, 3)?)),
             sub_last: Arc::new(Mutex::new(VecDeque::new())),
             inc_last: Arc::new(Mutex::new(VecDeque::new())),
         })
@@ -60,13 +53,10 @@ impl Metrics {
             let now = Instant::now();
 
             // ── TPS window ──
-            while tps_q
-                .front()
-                .map_or(false, |(t, _)| *t + Duration::from_secs(10) < now)
-            {
+            while tps_q.front().map_or(false, |(t, _)| *t + Duration::from_secs(10) < now) {
                 tps_q.pop_front();
             }
-            let inc_now = self.included.load(Ordering::Relaxed);
+            let inc_now  = self.included.load(Ordering::Relaxed);
             let delta_inc = inc_now - last_inc;
             last_inc = inc_now;
             tps_q.push_back((now, delta_inc));
@@ -80,15 +70,13 @@ impl Metrics {
                 let mut dq = self.sub_last.lock();
                 dq.retain(|(t, _)| *t + Duration::from_secs(10) >= now);
                 let mut v: Vec<u64> = dq.iter().map(|(_, x)| *x).collect();
-                v.sort();
-                median(&v)
+                v.sort(); median(&v)
             };
             let inc_p50_10 = {
                 let mut dq = self.inc_last.lock();
                 dq.retain(|(t, _)| *t + Duration::from_secs(10) >= now);
                 let mut v: Vec<u64> = dq.iter().map(|(_, x)| *x).collect();
-                v.sort();
-                median(&v)
+                v.sort(); median(&v)
             };
 
             let in_flight = self.sent.load(Ordering::Relaxed).saturating_sub(inc_now);

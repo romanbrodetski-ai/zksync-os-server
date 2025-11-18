@@ -49,22 +49,22 @@ pub fn spawn_erc20_workers(
         .into_iter()
         .enumerate()
         .map(|(idx, wallet)| {
-            let sem = sems[idx].clone();
-            let provider_c = provider.clone();
-            let addrs_c = addrs.clone();
-            let m = metrics.clone();
-            let running_c = running.clone();
-            let rng_c = rng.clone();
-            let normal_c = normal;
+            let sem         = sems[idx].clone();
+            let provider_c  = provider.clone();
+            let addrs_c     = addrs.clone();
+            let m           = metrics.clone();
+            let running_c   = running.clone();
+            let rng_c       = rng.clone();
+            let normal_c    = normal;
             let gas_limit_c = gas_limit;
-            let token_addr_c = token_addr;
-            let dest_rand = dest_random;
-            let rpc_url_c = rpc_url.clone();
-            let http_c = http.clone();
+            let token_addr_c= token_addr;
+            let dest_rand   = dest_random;
+            let rpc_url_c   = rpc_url.clone();
+            let http_c      = http.clone();
 
             tokio::spawn(async move {
                 let signer = SignerMiddleware::new(provider_c.clone(), wallet.clone());
-                let token = SimpleERC20::new(token_addr_c, Arc::new(signer.clone()));
+                let token  = SimpleERC20::new(token_addr_c, Arc::new(signer.clone()));
 
                 let mut nonce = signer
                     .get_transaction_count(signer.address(), Some(BlockNumber::Pending.into()))
@@ -77,7 +77,7 @@ pub fn spawn_erc20_workers(
                     // 0. fetch gas‑price once per batch            //
                     //----------------------------------------------//
                     let gas_price = match provider_c.get_gas_price().await {
-                        Ok(p) => p,
+                        Ok(p)  => p,
                         Err(e) => {
                             eprintln!("❗ gas‑price fetch error {e} – using 3 gwei");
                             U256::from(3_000_000_000u64) // 3 gwei fallback
@@ -87,9 +87,9 @@ pub fn spawn_erc20_workers(
                     //----------------------------------------------//
                     // 1. build ≤BATCH_SIZE signed raw txs          //
                     //----------------------------------------------//
-                    let mut batch_raw = Vec::<Bytes>::new();
+                    let mut batch_raw    = Vec::<Bytes>::new();
                     let mut batch_permit = Vec::<tokio::sync::OwnedSemaphorePermit>::new();
-                    let mut send_start = Vec::<Instant>::new();
+                    let mut send_start   = Vec::<Instant>::new();
 
                     for _ in 0..BATCH_SIZE {
                         let permit = match sem.clone().try_acquire_owned() {
@@ -120,11 +120,7 @@ pub fn spawn_erc20_workers(
                         let mut amt = mean_amt;
                         if delta != 0.0 {
                             let d = U256::from((mean_amt.as_u128() as f64 * delta.abs()) as u128);
-                            amt = if delta.is_sign_positive() {
-                                amt + d
-                            } else {
-                                amt - d
-                            };
+                            amt = if delta.is_sign_positive() { amt + d } else { amt - d };
                         }
 
                         // craft + sign
@@ -168,23 +164,19 @@ pub fn spawn_erc20_workers(
                         .collect();
 
                     let resp = match http_c.post(&rpc_url_c).json(&payload).send().await {
-                        Ok(r) => r,
+                        Ok(r)  => r,
                         Err(e) => {
                             eprintln!("❗ batch send error {e}");
-                            for p in batch_permit {
-                                drop(p);
-                            }
+                            for p in batch_permit { drop(p); }
                             continue;
                         }
                     };
 
                     let replies: Vec<serde_json::Value> = match resp.json().await {
-                        Ok(v) => v,
+                        Ok(v)  => v,
                         Err(e) => {
                             eprintln!("❗ bad JSON reply {e}");
-                            for p in batch_permit {
-                                drop(p);
-                            }
+                            for p in batch_permit { drop(p); }
                             continue;
                         }
                     };
@@ -206,7 +198,7 @@ pub fn spawn_erc20_workers(
                             m.sub_last.lock().push_back((Instant::now(), sub_ms));
                             m.sent.fetch_add(1, Ordering::Relaxed);
 
-                            let prov = provider_c.clone();
+                            let prov  = provider_c.clone();
                             let m_inc = m.clone();
                             tokio::spawn(async move {
                                 let t_inc = Instant::now();
@@ -215,7 +207,10 @@ pub fn spawn_erc20_workers(
                                         Ok(Some(_)) => {
                                             let inc = t_inc.elapsed().as_millis() as u64;
                                             m_inc.include.write().record(inc).ok();
-                                            m_inc.inc_last.lock().push_back((Instant::now(), inc));
+                                            m_inc
+                                                .inc_last
+                                                .lock()
+                                                .push_back((Instant::now(), inc));
                                             m_inc.included.fetch_add(1, Ordering::Relaxed);
                                             break;
                                         }
