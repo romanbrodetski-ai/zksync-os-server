@@ -109,7 +109,7 @@ impl<T: Clone> ProverJobMap<T> {
     pub async fn pick_job(
         &self,
         min_age: Duration,
-        prover_id: &'static str,
+        prover_id: &str,
     ) -> Option<(FriJob, T)> {
         let now = Instant::now();
         let mut result = self
@@ -135,7 +135,7 @@ impl<T: Clone> ProverJobMap<T> {
     pub async fn pick_jobs_while<F>(
         &self,
         limit: usize,
-        prover_id: &'static str,
+        prover_id: &str,
         mut predicate: F,
     ) -> Vec<(FriJob, T)>
     where
@@ -157,7 +157,7 @@ impl<T: Clone> ProverJobMap<T> {
             }
 
             // Assign job
-            entry.metadata.assign(now, prover_id);
+            entry.metadata.assign(now, prover_id.to_string());
             selected_jobs.push(entry.metadata.clone());
         }
 
@@ -261,12 +261,12 @@ impl<T: Clone> ProverJobMap<T> {
     /// Notifies inbound jobs waiting in add_job() that space may be available.
     /// Records metrics and logs timing info. Returns the batch envelope if the job existed.
     ///
-    /// Used for FRI jobs (one batch == on job)
+    /// Used for FRI jobs (one batch == one job)
     pub async fn complete_job(
         &self,
         batch_number: u64,
         prover_type: ProverType,
-        prover_id: &'static str,
+        prover_id: &str,
     ) -> Option<SignedBatchEnvelope<T>> {
         self.complete_many_jobs(batch_number, batch_number, prover_type, prover_id)
             .await
@@ -284,7 +284,7 @@ impl<T: Clone> ProverJobMap<T> {
         batch_number_from: u64,
         batch_number_to: u64,
         prover_type: ProverType,
-        prover_id: &'static str,
+        prover_id: &str,
     ) -> Option<Vec<SignedBatchEnvelope<T>>> {
         let mut jobs = self.jobs.lock().await;
         // First, verify all jobs exist -
@@ -318,11 +318,11 @@ impl<T: Clone> ProverJobMap<T> {
         match &stats.job_with_max_attempts_info {
             // only writing metrics for normal case - the last assigned prover reported result
             Some(assignment_info) if assignment_info.last_assigned_to == prover_id => {
-                PROVER_METRICS.prove_time[&(self.prover_stage, prover_type, prover_id)]
+                PROVER_METRICS.prove_time[&(self.prover_stage, prover_type, prover_id.to_string())]
                     // time since last assignment is proving time
                     .observe(assignment_info.time_since_last_assignment);
                 if stats.total_txs > 0 {
-                    PROVER_METRICS.prove_time_per_tx[&(self.prover_stage, prover_type, prover_id)]
+                    PROVER_METRICS.prove_time_per_tx[&(self.prover_stage, prover_type, prover_id.to_string())]
                         .observe(
                             assignment_info.time_since_last_assignment / stats.total_txs as u32,
                         );
@@ -412,6 +412,7 @@ impl<T: Clone> ProverJobMap<T> {
                 assigned_to_prover_id: entry
                     .metadata
                     .assigned_to_prover_id
+                    .as_ref()
                     .map(|id| id.to_string()),
                 added_seconds_ago: entry.metadata.added_at.elapsed().as_secs(),
             })

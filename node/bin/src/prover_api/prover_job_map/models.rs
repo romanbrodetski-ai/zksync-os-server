@@ -15,7 +15,7 @@ pub struct JobMetadata {
     pub proving_version: ProvingVersion,
     pub tx_count: usize,
     pub added_at: Instant,
-    pub assigned_to_prover_id: Option<&'static str>,
+    pub assigned_to_prover_id: Option<String>,
     pub assigned_at: Option<Instant>,
     pub current_attempt: usize, // 0 = never assigned, 1+ = assigned N times
 }
@@ -71,7 +71,7 @@ impl JobMetadata {
     }
 
     /// Assign (or reassign) this job to a prover.
-    pub fn assign(&mut self, assigned_at: Instant, assigned_to_prover_id: &'static str) {
+    pub fn assign(&mut self, assigned_at: Instant, assigned_to_prover_id: String) {
         self.assigned_at = Some(assigned_at);
         self.assigned_to_prover_id = Some(assigned_to_prover_id);
         self.current_attempt += 1;
@@ -93,7 +93,7 @@ pub struct JobBatchStats {
 pub(super) struct PreviousAttemptsInfo {
     pub attempts: usize,
     pub time_since_last_assignment: Duration,
-    pub last_assigned_to: &'static str,
+    pub last_assigned_to: String,
 }
 
 impl JobBatchStats {
@@ -108,13 +108,16 @@ impl JobBatchStats {
             .unwrap();
 
         let job_with_max_attempts_info = if job_with_max_attempts.current_attempt > 0 {
-            None
-        } else {
             Some(PreviousAttemptsInfo {
                 attempts: job_with_max_attempts.current_attempt,
                 time_since_last_assignment: job_with_max_attempts.assigned_at.unwrap().elapsed(),
-                last_assigned_to: job_with_max_attempts.assigned_to_prover_id.unwrap(),
+                last_assigned_to: job_with_max_attempts
+                    .assigned_to_prover_id
+                    .clone()
+                    .unwrap(),
             })
+        } else {
+            None
         };
 
         JobBatchStats {

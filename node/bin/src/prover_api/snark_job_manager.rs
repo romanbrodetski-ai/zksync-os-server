@@ -75,14 +75,12 @@ impl SnarkJobManager {
         &self,
         prover_id: String,
     ) -> anyhow::Result<Option<Vec<(FriJob, FriProof)>>> {
-        let prover_id = Box::leak(prover_id.to_owned().into_boxed_str());
-
         // consume/remove all fake jobs that may be in the front of the queue
         self.process_pending_fake_fri_proofs().await?;
 
         let batches_with_real_proofs = self
             .jobs
-            .pick_jobs_while(self.max_fris_per_snark, prover_id, |job| {
+            .pick_jobs_while(self.max_fris_per_snark, &prover_id, |job| {
                 !job.batch_envelope.data.is_fake()
             })
             .await;
@@ -103,7 +101,6 @@ impl SnarkJobManager {
         payload: Vec<u8>,
         prover_id: String,
     ) -> anyhow::Result<()> {
-        let prover_id = Box::leak(prover_id.to_owned().into_boxed_str());
         // note: we still hold mutex while verifying the proof -
         // this is desired since we don't want the batches to timeout
 
@@ -115,7 +112,7 @@ impl SnarkJobManager {
         // prove is valid - consuming proven batches
         let Some(consumed_batches_proven) = self
             .jobs
-            .complete_many_jobs(batch_from, batch_to, ProverType::Real, prover_id)
+            .complete_many_jobs(batch_from, batch_to, ProverType::Real, &prover_id)
             .await
         else {
             anyhow::bail!("race condition: some batches were completed earlier")

@@ -135,8 +135,7 @@ impl FriJobManager {
         min_age: Duration,
         prover_id: String,
     ) -> Option<(FriJob, ProverInput)> {
-        let prover_id = Box::leak(prover_id.to_owned().into_boxed_str());
-        self.jobs.pick_job(min_age, prover_id).await
+        self.jobs.pick_job(min_age, &prover_id).await
     }
 
     /// Submit a **real** proof provided by an external prover.
@@ -182,7 +181,6 @@ impl FriJobManager {
         // We want to ensure we can send the result downstream before we remove the job from queue
         let permit = self.try_reserve_permit_downstream()?;
 
-        let prover_id = Box::leak(prover_id.to_owned().into_boxed_str());
         // Remove the job from the assigned map.
         let Some(removed_job) = self
             .jobs
