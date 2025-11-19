@@ -52,6 +52,7 @@ impl Debug for QueueStatistics {
 
 impl JobMetadata {
     pub fn new_from_batch<T>(batch_envelope: &SignedBatchEnvelope<T>) -> Self {
+        let batch_number = batch_envelope.batch_number();
         let proving_version = batch_envelope
             .batch
             .proving_version()
@@ -89,7 +90,7 @@ pub struct JobBatchStats {
     pub job_with_max_attempts_info: Option<PreviousAttemptsInfo>,
 }
 
-struct PreviousAttemptsInfo {
+pub(super) struct PreviousAttemptsInfo {
     pub attempts: usize,
     pub time_since_last_assignment: Duration,
     pub last_assigned_to: &'static str,
@@ -119,12 +120,13 @@ impl JobBatchStats {
         JobBatchStats {
             min_batch_number: min_batch.batch_number,
             max_batch_number,
-            proving_version: min_batch.proving_version.clone(),
+            proving_version: min_batch.proving_version,
             max_time_since_added: min_batch.added_at.elapsed(),
             total_txs: metadata_list.iter().map(|m| m.tx_count).sum(),
             job_with_max_attempts_info,
         }
     }
+    #[allow(dead_code)]
     fn format_batch_range(batch_numbers: &[u64]) -> String {
         match batch_numbers.len() {
             0 => String::from("none"),

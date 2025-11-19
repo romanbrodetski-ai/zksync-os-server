@@ -25,10 +25,6 @@ use zksync_os_types::ProvingVersion;
 /// `SnarkJobManager` aims to assign real prover jobs to real SNARK provers -
 ///     but if jobs are not picked within a timeout (`max_batch_age`), it releases it to a fake prover
 ///
-/// This way we provide the following guarantees (in this order):
-///     * no jobs older than `max_batch_age` stay in the queue
-///     * real FRI proofs are not discarded (by faking SNARKs)
-///     * fake SNARKs aim to include maximum number of FRIs possible
 ///
 /// `ComponentStateLatencyTracker`: Only tracks `Processing` / `WaitingSend` states
 pub struct SnarkJobManager {
@@ -82,7 +78,7 @@ impl SnarkJobManager {
         let prover_id = Box::leak(prover_id.to_owned().into_boxed_str());
 
         // consume/remove all fake jobs that may be in the front of the queue
-        self.fake_prove_all_next_jobs(None).await?;
+        self.process_pending_fake_fri_proofs().await?;
 
         let batches_with_real_proofs = self
             .jobs
@@ -96,16 +92,6 @@ impl SnarkJobManager {
             return Ok(None);
         }
 
-        // All jobs have the same vk_hash - guaranteed by `pick_jobs_while`
-        let first_vk_hash = batches_with_real_proofs[0].0.vk_hash.clone();
-
-        tracing::info!(
-            prover_id,
-            from_batch = batches_with_real_proofs.first().unwrap().0.batch_number,
-            to_batch = batches_with_real_proofs.last().unwrap().0.batch_number,
-            vk = first_vk_hash,
-            "real SNARK prove job for is picked by a prover",
-        );
         Ok(Some(batches_with_real_proofs))
     }
 
@@ -181,10 +167,16 @@ impl SnarkJobManager {
         Ok(())
     }
 
-    /// Consumes fake FRI proves from HEAD and turns them into fake SNARKs
-    /// Additionally, if `timeout_for_real_fris` is Some,
-    ///    also consumes real FRI proves that are older than `timeout_for_real_fris`
-    async fn fake_prove_all_next_jobs(
+    /// Consumes fake FRI proofs from the head of the queue and turns them into fake SNARKs.
+    async fn process_pending_fake_fri_proofs(&self) -> anyhow::Result<()> {
+        self.process_pending_fake_or_timed_out_fri_proofs(None)
+            .await
+    }
+
+    /// Consumes FRI proofs from the head of the queue that satisfy the following conditions:
+    /// * FRI proof is fake
+    /// * if `timeout_for_real_fris` is Some, then also jobs that are older than `timeout_for_real_fris`
+    async fn process_pending_fake_or_timed_out_fri_proofs(
         &self,
         timeout_for_real_fris: Option<Duration>,
     ) -> anyhow::Result<()> {
@@ -225,7 +217,7 @@ impl SnarkJobManager {
                 }
             }
 
-            // Observability - add traces
+            // Add observability traces
             let batches_with_fake_proofs = completed
                 .into_iter()
                 .map(|batch| batch.with_stage(BatchExecutionStage::SnarkProvedFake))
@@ -272,7 +264,7 @@ impl FakeSnarkProver {
         loop {
             tokio::time::sleep(self.polling_interval).await;
             self.job_manager
-                .fake_prove_all_next_jobs(Some(self.max_batch_age))
+                .process_pending_fake_or_timed_out_fri_proofs(Some(self.max_batch_age))
                 .await?;
         }
     }

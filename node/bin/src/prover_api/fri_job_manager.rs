@@ -104,12 +104,12 @@ impl FriJobManager {
     }
 
     /// Adds a pending job to the queue.
-    /// Awaits if queue is full (ProverJobMap.max_assigned_batch_range).
+    /// Awaits if the queue is full (ProverJobMap.max_assigned_batch_range).
     pub async fn add_job(&self, batch_envelope: SignedBatchEnvelope<ProverInput>) {
         self.jobs.add_job(batch_envelope).await
     }
 
-    /// Peek a batch data for a given batch number
+    /// Peek batch data for a given batch number
     pub async fn peek_batch_data(&self, batch_number: u64) -> Option<(&str, ProverInput)> {
         match self.jobs.get_prover_input(batch_number).await {
             Some((vk_hash, prover_input)) => {
@@ -118,15 +118,15 @@ impl FriJobManager {
             }
             None => {
                 tracing::debug!(
-                    "Trying to peek batch number {batch_number} that is not present in jobs"
+                    "Trying to peek batch number {batch_number} that is not present in the queue"
                 );
                 None
             }
         }
     }
 
-    /// Picks the **smallest** batch number that is either **pending** and old enough
-    /// or whose assignment has **timed‑out**.
+    /// Picks the oldest batch that is either pending and old enough
+    /// or whose assignment has timed‑out.
     ///
     /// `min_age` is used for fake provers to avoid taking fresh items,
     /// letting real provers race first.
@@ -176,12 +176,10 @@ impl FriJobManager {
             }
         }
 
-        // Deserialize and verify the proof
         self.verify_proof(&batch_metadata, &proof_bytes, batch_number, prover_id)
             .await?;
-        // Now we know that the proof is valid.
 
-        // We want to ensure we can send the result downstream before we remove the job
+        // We want to ensure we can send the result downstream before we remove the job from queue
         let permit = self.try_reserve_permit_downstream()?;
 
         let prover_id = Box::leak(prover_id.to_owned().into_boxed_str());
@@ -192,7 +190,7 @@ impl FriJobManager {
             .await
         else {
             // If already removed due to a race
-            // (another submit won), we treat it as a success to keep the API idempotent.
+            // (another submit won), we still return success to keep the API idempotent.
             tracing::warn!(
                 batch_number,
                 prover_id,
