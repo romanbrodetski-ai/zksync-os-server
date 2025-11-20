@@ -183,8 +183,7 @@ impl SnarkJobManager {
                 .pick_jobs_while(self.max_fris_per_snark, "fake_prover", |job| {
                     job.batch_envelope.data.is_fake()
                         || (timeout_for_real_fris.is_some()
-                            && job.batch_envelope.time_since_first_block().unwrap()
-                                >= timeout_for_real_fris.unwrap())
+                            && job.metadata.added_at.elapsed() >= timeout_for_real_fris.unwrap())
                 })
                 .await;
 
