@@ -384,6 +384,10 @@ pub struct BatcherConfig {
     /// Max number of blocks per batch
     #[config(default_t = 10)]
     pub blocks_per_batch_limit: u64,
+
+    /// Max number of transactions per batch
+    #[config(default_t = None)]
+    pub transactions_per_batch_limit: Option<u64>,
 }
 
 /// Only used on the Main Node.

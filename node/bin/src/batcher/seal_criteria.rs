@@ -12,6 +12,7 @@ pub(crate) struct BatchInfoAccumulator {
     pub pubdata_bytes: u64,
     pub l2_to_l1_logs_count: u64,
     pub block_count: u64,
+    pub tx_count: u64,
     pub has_upgrade_tx: bool,
 
     pub protocol_versions: HashSet<ProtocolSemanticVersion>,
@@ -20,13 +21,19 @@ pub(crate) struct BatchInfoAccumulator {
     // Limits
     pub blocks_per_batch_limit: u64,
     pub batch_pubdata_limit_bytes: u64,
+    pub transactions_per_batch_limit: Option<u64>,
 }
 
 impl BatchInfoAccumulator {
-    pub fn new(blocks_per_batch_limit: u64, batch_pubdata_limit_bytes: u64) -> Self {
+    pub fn new(
+        blocks_per_batch_limit: u64,
+        batch_pubdata_limit_bytes: u64,
+        transactions_per_batch_limit: Option<u64>,
+    ) -> Self {
         Self {
             blocks_per_batch_limit,
             batch_pubdata_limit_bytes,
+            transactions_per_batch_limit,
             ..Default::default()
         }
     }
@@ -40,6 +47,7 @@ impl BatchInfoAccumulator {
             .map(|tx_result| tx_result.as_ref().map_or(0, |tx| tx.l2_to_l1_logs.len()))
             .sum::<usize>() as u64;
         self.block_count += 1;
+        self.tx_count += replay_record.transactions.len() as u64;
         self.execution_versions
             .insert(replay_record.block_context.execution_version);
         self.protocol_versions
@@ -65,11 +73,17 @@ impl BatchInfoAccumulator {
 
     /// Checks if the batch should be sealed based on the content of the blocks.
     /// e.g. due to the block count limit, tx count limit, or pubdata size limit.
+    ///
+    /// IMPORTANT: This function ensures at least one block is always included in a batch.
+    /// It will only return true if block_count > 1, guaranteeing the first block is always accepted.
     pub fn should_seal(&self) -> bool {
-        // With current implementation, sealer assumes that the first block in the batch
-        // can always be included, so we shouldn't return `true` until we add one more block here.
-        // Otherwise, we will end up in a situation where the first block is never included in any batch.
-        if self.has_upgrade_tx && self.block_count > 1 {
+        // Ensure at least one block is always included in the batch.
+        // This prevents creating empty batches when the first block exceeds limits.
+        if self.block_count <= 1 {
+            return false;
+        }
+
+        if self.has_upgrade_tx {
             BATCHER_METRICS.seal_reason[&"upgrade_tx"].inc();
             tracing::debug!("Batcher: sealing batch due to upgrade transaction");
             return true;
@@ -105,6 +119,14 @@ impl BatchInfoAccumulator {
             BATCHER_METRICS.seal_reason[&"l2_l1_logs"].inc();
             tracing::debug!("Batcher: reached max number of L2 to L1 logs");
             return true;
+        }
+
+        if let Some(tx_limit) = self.transactions_per_batch_limit {
+            if self.tx_count > tx_limit {
+                BATCHER_METRICS.seal_reason[&"transactions_per_batch"].inc();
+                tracing::debug!("Batcher: reached transactions per batch limit");
+                return true;
+            }
         }
 
         // TODO: once upgrade functionality is implemented in the sequencer, this check will be equivalent

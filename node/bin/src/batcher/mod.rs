@@ -154,6 +154,7 @@ impl Batcher {
         let mut accumulator = BatchInfoAccumulator::new(
             self.batcher_config.blocks_per_batch_limit,
             self.pubdata_limit_bytes,
+            self.batcher_config.transactions_per_batch_limit,
         );
 
         loop {
