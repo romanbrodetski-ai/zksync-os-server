@@ -220,6 +220,110 @@ impl<Finality: ReadFinality> BatchVerificationClient<Finality> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{Address, B256};
+    use secrecy::SecretString;
+    use tokio::sync::watch;
+    use zksync_os_contract_interface::models::{CommitBatchInfo, DACommitmentScheme};
+    use zksync_os_storage_api::FinalityStatus;
+    use zksync_os_types::PubdataMode;
+
+    struct DummyFinality {
+        status: FinalityStatus,
+        rx: watch::Receiver<FinalityStatus>,
+    }
+
+    impl DummyFinality {
+        fn new() -> Self {
+            let status = FinalityStatus {
+                last_committed_block: 0,
+                last_committed_batch: 0,
+                last_executed_block: 0,
+                last_executed_batch: 0,
+            };
+            let (tx, rx) = watch::channel(status.clone());
+            let _ = tx;
+            Self { status, rx }
+        }
+    }
+
+    impl ReadFinality for DummyFinality {
+        fn get_finality_status(&self) -> FinalityStatus {
+            self.status.clone()
+        }
+
+        fn subscribe(&self) -> watch::Receiver<FinalityStatus> {
+            self.rx.clone()
+        }
+    }
+
+    fn dummy_commit_batch_info() -> CommitBatchInfo {
+        CommitBatchInfo {
+            batch_number: 1,
+            new_state_commitment: B256::ZERO,
+            number_of_layer1_txs: 0,
+            priority_operations_hash: B256::ZERO,
+            dependency_roots_rolling_hash: B256::ZERO,
+            l2_to_l1_logs_root_hash: B256::ZERO,
+            l2_da_commitment_scheme: DACommitmentScheme::BlobsAndPubdataKeccak256,
+            da_commitment: B256::ZERO,
+            first_block_timestamp: 0,
+            first_block_number: Some(1),
+            last_block_timestamp: 0,
+            last_block_number: Some(1),
+            chain_id: 270,
+            operator_da_input: Vec::new(),
+        }
+    }
+
+    fn dummy_request(first_block_number: u64, last_block_number: u64) -> BatchVerificationRequest {
+        BatchVerificationRequest {
+            batch_number: 1,
+            first_block_number,
+            last_block_number,
+            pubdata_mode: PubdataMode::Calldata,
+            request_id: 42,
+            commit_data: dummy_commit_batch_info(),
+        }
+    }
+
+    fn make_client() -> BatchVerificationClient<DummyFinality> {
+        let finality = DummyFinality::new();
+        let private_key = SecretString::new(
+            "0xf9306dd03807c08b646d47c739bd51e4d2a25b02bad0efb3d93f095982ac98cd".into(),
+        );
+        let chain_id = 270u64;
+        let diamond_proxy = Address::ZERO;
+        let server_address = "127.0.0.1:0".to_string();
+
+        BatchVerificationClient::new(
+            finality,
+            private_key,
+            chain_id,
+            diamond_proxy,
+            server_address,
+        )
+    }
+
+    #[tokio::test]
+    async fn handle_verification_request_missing_block_returns_error() {
+        let client = make_client();
+        let first_block_number = 10u64;
+        let request = dummy_request(first_block_number, first_block_number);
+
+        let result = client.handle_verification_request(request).await;
+
+        match result {
+            Err(BatchVerificationError::MissingBlock(block)) => {
+                assert_eq!(block, first_block_number);
+            }
+            _ => panic!("expected MissingBlock error"),
+        }
+    }
+}
+
 enum BatchVerificationClientState {
     Connecting,
     WaitingRecv,
