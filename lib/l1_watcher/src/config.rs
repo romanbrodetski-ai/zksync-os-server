@@ -1,3 +1,4 @@
+use alloy::primitives::B256;
 use std::time::Duration;
 
 /// Configuration of L1 watcher.
@@ -8,4 +9,7 @@ pub struct L1WatcherConfig {
 
     /// How often to poll L1 for new priority requests.
     pub poll_interval: Duration,
+
+    /// List of L1 transaction hashes to ignore when processing events.
+    pub ignored_l1_tx_hashes: Vec<B256>,
 }

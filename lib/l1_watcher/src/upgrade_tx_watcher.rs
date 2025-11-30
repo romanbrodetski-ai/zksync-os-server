@@ -107,6 +107,7 @@ impl L1UpgradeTxWatcher {
             config.max_blocks_to_process,
             config.poll_interval,
             this.into(),
+            config.ignored_l1_tx_hashes.clone(),
         );
 
         Ok(l1_watcher)

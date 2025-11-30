@@ -339,6 +339,12 @@ pub struct L1WatcherConfig {
     /// How often to poll L1 for new priority requests.
     #[config(default_t = 100 * TimeUnit::Millis)]
     pub poll_interval: Duration,
+
+    /// List of L1 transaction hashes to ignore when processing events.
+    /// Format: comma-separated hex strings with 0x prefix.
+    /// It Should contain l1 commit transactions for batches that were later reverted.
+    #[config(default_t = Vec::new())]
+    pub ignored_l1_tx_hashes: Vec<String>,
 }
 
 #[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
@@ -667,6 +673,11 @@ impl From<L1WatcherConfig> for zksync_os_l1_watcher::L1WatcherConfig {
         Self {
             max_blocks_to_process: c.max_blocks_to_process,
             poll_interval: c.poll_interval,
+            ignored_l1_tx_hashes: c
+                .ignored_l1_tx_hashes
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect(),
         }
     }
 }

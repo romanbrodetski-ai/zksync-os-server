@@ -1,6 +1,6 @@
 use crate::ProcessRawEvents;
 use crate::metrics::METRICS;
-use alloy::primitives::BlockNumber;
+use alloy::primitives::{B256, BlockNumber};
 use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::{Filter, Log};
 use std::time::Duration;
@@ -14,6 +14,7 @@ pub struct L1Watcher {
     max_blocks_to_process: u64,
     poll_interval: Duration,
     processor: Box<dyn ProcessRawEvents>,
+    ignored_l1_tx_hashes: Vec<B256>,
 }
 
 impl L1Watcher {
@@ -23,6 +24,7 @@ impl L1Watcher {
         max_blocks_to_process: u64,
         poll_interval: Duration,
         processor: Box<dyn ProcessRawEvents>,
+        ignored_l1_tx_hashes: Vec<B256>,
     ) -> Self {
         Self {
             provider,
@@ -30,6 +32,7 @@ impl L1Watcher {
             max_blocks_to_process,
             poll_interval,
             processor,
+            ignored_l1_tx_hashes,
         }
     }
 }
@@ -80,7 +83,24 @@ impl L1Watcher {
             .to_block(to)
             .event_signature(self.processor.event_signatures())
             .address(self.processor.contract_addresses());
-        let new_logs = self.provider.get_logs(&filter).await?;
+        let mut new_logs = self.provider.get_logs(&filter).await?;
+
+        // Filter out events from ignored L1 transaction hashes
+        if !self.ignored_l1_tx_hashes.is_empty() {
+            new_logs.retain(|log| {
+                if let Some(tx_hash) = log.transaction_hash
+                    && self.ignored_l1_tx_hashes.contains(&tx_hash)
+                {
+                    tracing::warn!(
+                        transaction_hash = ?tx_hash,
+                        block_number = ?log.block_number,
+                        "skipping event from ignored L1 transaction hash"
+                    );
+                    return false;
+                }
+                true
+            });
+        }
 
         if new_logs.is_empty() {
             tracing::trace!(l1_block_from = from, l1_block_to = to, "no new events");

@@ -64,6 +64,7 @@ impl<Finality: WriteFinality, BatchStorage: ReadBatch> L1ExecuteWatcher<Finality
             config.max_blocks_to_process,
             config.poll_interval,
             this.into(),
+            config.ignored_l1_tx_hashes.clone(),
         );
 
         Ok(l1_watcher)
