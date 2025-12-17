@@ -19,7 +19,7 @@ pub struct SystemTransactionEnvelope<T: SystemTxType> {
 
 impl<T: SystemTxType> SystemTransactionEnvelope<T> {
     pub fn hash(&self) -> &B256 {
-        todo!("not implemented")
+        todo!("Should it be something like `keccak256(self.abi_encode())`?")
     }
 }
 

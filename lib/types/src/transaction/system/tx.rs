@@ -1,9 +1,8 @@
 use alloy::consensus::transaction::{RlpEcdsaDecodableTx, RlpEcdsaEncodableTx};
 use alloy::consensus::{Transaction, Typed2718};
 use alloy::primitives::ChainId;
-use alloy::primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use alloy::primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy::rpc::types::{AccessList, SignedAuthorization};
-use alloy::signers::Signature;
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use serde::{Deserialize, Serialize};
 
@@ -121,10 +120,6 @@ impl<T: SystemTxType> RlpEcdsaEncodableTx for SystemTransaction<T> {
         self.gas_limit.encode(out);
         self.destination.encode(out);
         self.data.encode(out);
-    }
-
-    fn tx_hash_with_type(&self, _signature: &Signature, _ty: u8) -> TxHash {
-        todo!("not implemented")
     }
 }
 
