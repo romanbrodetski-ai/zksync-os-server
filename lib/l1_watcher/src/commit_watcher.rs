@@ -94,7 +94,7 @@ impl<Finality: WriteFinality> ProcessL1Event for L1CommitWatcher<Finality> {
             let tx_hash = log
                 .transaction_hash
                 .expect("indexed log does not belong to any transaction");
-            // todo: retry with backoff
+            // todo: retry-backoff logic in case tx is missing
             let tx_receipt = self
                 .provider
                 .get_transaction_receipt(tx_hash)

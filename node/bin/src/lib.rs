@@ -68,7 +68,7 @@ use zksync_os_l1_sender::pipeline_component::L1Sender;
 use zksync_os_l1_sender::upgrade_gatekeeper::UpgradeGatekeeper;
 use zksync_os_l1_watcher::{
     BatchRangeWatcher, BatchRangeWatcherInit, CommittedBatch, L1CommitWatcher, L1ExecuteWatcher,
-    L1TxWatcher, L1UpgradeTxWatcher, StoredBatchData, util,
+    L1TxWatcher, L1UpgradeTxWatcher, StoredBatchData,
 };
 use zksync_os_mempool::L2TransactionPool;
 use zksync_os_merkle_tree::{MerkleTree, RocksDBWrapper};
@@ -249,9 +249,12 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     );
 
     let (last_l1_committed_block, last_l1_proved_block, last_l1_executed_block) =
-        commit_proof_execute_block_numbers(&l1_state)
-            .await
-            .expect("could not fetch last committed/proved/executed block number");
+        commit_proof_execute_block_numbers(
+            &l1_state,
+            config.l1_watcher_config.max_blocks_to_process,
+        )
+        .await
+        .expect("could not fetch last committed/proved/executed block number");
 
     let node_startup_state = NodeStateOnStartup {
         is_main_node: config.sequencer_config.is_main_node(),
@@ -895,24 +898,20 @@ fn report_exit<T, E: std::fmt::Debug>(name: &'static str) -> impl Fn(Result<T, E
     }
 }
 
-async fn commit_proof_execute_block_numbers(l1_state: &L1State) -> anyhow::Result<(u64, u64, u64)> {
+async fn commit_proof_execute_block_numbers(
+    l1_state: &L1State,
+    max_l1_blocks_to_scan: u64,
+) -> anyhow::Result<(u64, u64, u64)> {
     let last_committed_block = if l1_state.last_committed_batch == 0 {
         0
     } else {
-        let l1_block_with_commit = util::find_l1_commit_block_by_batch_number(
-            l1_state.diamond_proxy.clone(),
-            l1_state.last_committed_batch,
-            // todo: depend on config
-            1000,
-        )
-        .await?;
-        util::fetch_stored_batch_data(
+        zksync_os_l1_watcher::util::find_stored_batch_data_by_batch_number(
             &l1_state.diamond_proxy,
-            l1_block_with_commit,
             l1_state.last_committed_batch,
+            max_l1_blocks_to_scan,
         )
         .await?
-        .context("committed batch was not found")?
+        .context("could not find where last committed batch was committed")?
         .last_block_number
     };
 
@@ -920,40 +919,26 @@ async fn commit_proof_execute_block_numbers(l1_state: &L1State) -> anyhow::Resul
     let last_proved_block = if l1_state.last_proved_batch == 0 {
         0
     } else {
-        let l1_block_with_commit = util::find_l1_commit_block_by_batch_number(
-            l1_state.diamond_proxy.clone(),
-            l1_state.last_proved_batch,
-            // todo: depend on config
-            1000,
-        )
-        .await?;
-        util::fetch_stored_batch_data(
+        zksync_os_l1_watcher::util::find_stored_batch_data_by_batch_number(
             &l1_state.diamond_proxy,
-            l1_block_with_commit,
             l1_state.last_proved_batch,
+            max_l1_blocks_to_scan,
         )
         .await?
-        .context("proved batch was not found")?
+        .context("could not find where last proved batch was committed")?
         .last_block_number
     };
 
     let last_executed_block = if l1_state.last_executed_batch == 0 {
         0
     } else {
-        let l1_block_with_commit = util::find_l1_commit_block_by_batch_number(
-            l1_state.diamond_proxy.clone(),
-            l1_state.last_executed_batch,
-            // todo: depend on config
-            1000,
-        )
-        .await?;
-        util::fetch_stored_batch_data(
+        zksync_os_l1_watcher::util::find_stored_batch_data_by_batch_number(
             &l1_state.diamond_proxy,
-            l1_block_with_commit,
             l1_state.last_executed_batch,
+            max_l1_blocks_to_scan,
         )
         .await?
-        .context("executed batch was not found")?
+        .context("could not find where last executed batch was committed")?
         .last_block_number
     };
     Ok((last_committed_block, last_proved_block, last_executed_block))

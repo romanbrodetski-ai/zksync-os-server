@@ -273,6 +273,18 @@ pub async fn fetch_stored_batch_data(
     }))
 }
 
+/// Finds and decodes stored batch data for batch `batch_number`. Returns `None` if there is none.
+pub async fn find_stored_batch_data_by_batch_number(
+    zk_chain: &ZkChain<DynProvider>,
+    batch_number: u64,
+    max_l1_blocks_to_scan: u64,
+) -> anyhow::Result<Option<StoredBatchData>> {
+    let l1_block_with_commit =
+        find_l1_commit_block_by_batch_number(zk_chain.clone(), batch_number, max_l1_blocks_to_scan)
+            .await?;
+    fetch_stored_batch_data(zk_chain, l1_block_with_commit, batch_number).await
+}
+
 /// Fetches and decodes batch commit transaction. Fails if transaction does not exist or is not
 /// a valid commit transaction.
 pub async fn fetch_commit_calldata(

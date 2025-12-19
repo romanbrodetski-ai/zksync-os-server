@@ -12,6 +12,7 @@ pub struct L1ExecuteWatcher<Finality> {
     zk_chain: ZkChain<DynProvider>,
     next_batch_number: u64,
     finality: Finality,
+    max_blocks_to_process: u64,
 }
 
 impl<Finality: WriteFinality> L1ExecuteWatcher<Finality> {
@@ -39,6 +40,7 @@ impl<Finality: WriteFinality> L1ExecuteWatcher<Finality> {
             zk_chain: zk_chain.clone(),
             next_batch_number: last_executed_batch + 1,
             finality,
+            max_blocks_to_process: config.max_blocks_to_process,
         };
         let l1_watcher = L1Watcher::new(
             zk_chain.provider().clone(),
@@ -81,19 +83,17 @@ impl<Finality: WriteFinality> ProcessL1Event for L1ExecuteWatcher<Finality> {
                 "skipping already processed executed batch",
             );
         } else {
-            let l1_block_with_commit = util::find_l1_commit_block_by_batch_number(
-                self.zk_chain.clone(),
+            // todo: This can take a while. For the majority of batches we have already pulled the
+            //       range in commit watcher, we should find a way to reuse it.
+            let batch = util::find_stored_batch_data_by_batch_number(
+                &self.zk_chain,
                 batch_number,
-                1000,
+                self.max_blocks_to_process,
             )
             .await
+            .unwrap()
+            .context("could not find where batch was committed on L1")
             .unwrap();
-            let batch =
-                util::fetch_stored_batch_data(&self.zk_chain, l1_block_with_commit, batch_number)
-                    .await
-                    .unwrap()
-                    .context("could not find where batch was committed on L1")
-                    .unwrap();
             let last_executed_block = batch.last_block_number;
             self.finality.update_finality_status(|finality| {
                 assert!(
