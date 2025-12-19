@@ -4,9 +4,9 @@ use alloy::primitives::Address;
 use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::Log;
 use anyhow::Context;
-use zksync_os_contract_interface::IExecutor::{BlockExecution, ReportCommittedBatchRangeZKsyncOS};
+use zksync_os_contract_interface::IExecutor::BlockExecution;
 use zksync_os_contract_interface::ZkChain;
-use zksync_os_storage_api::{ReadBatch, WriteFinality};
+use zksync_os_storage_api::WriteFinality;
 
 pub struct L1ExecuteWatcher<Finality> {
     zk_chain: ZkChain<DynProvider>,

@@ -3,10 +3,9 @@ use crate::{L1WatcherConfig, ProcessL1Event, util};
 use alloy::primitives::Address;
 use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::Log;
-use alloy::sol_types::SolEvent;
 use zksync_os_contract_interface::IExecutor::{BlockCommit, ReportCommittedBatchRangeZKsyncOS};
 use zksync_os_contract_interface::ZkChain;
-use zksync_os_storage_api::{ReadBatch, WriteFinality};
+use zksync_os_storage_api::WriteFinality;
 
 pub struct L1CommitWatcher<Finality> {
     provider: DynProvider,

@@ -1,16 +1,13 @@
 use crate::watcher::{L1Watcher, L1WatcherError};
 use crate::{L1WatcherConfig, ProcessL1Event, util};
-use alloy::consensus::Transaction;
 use alloy::eips::BlockId;
-use alloy::primitives::{Address, B256, BlockNumber, TxHash};
+use alloy::primitives::{Address, B256, BlockNumber};
 use alloy::providers::{DynProvider, Provider};
-use alloy::rpc::types::{Filter, Log};
+use alloy::rpc::types::Log;
 use anyhow::Context;
 use tokio::sync::mpsc;
-use zksync_os_batch_types::BatchInfo;
 use zksync_os_contract_interface::IExecutor::ReportCommittedBatchRangeZKsyncOS;
 use zksync_os_contract_interface::ZkChain;
-use zksync_os_contract_interface::calldata::CommitCalldata;
 use zksync_os_contract_interface::models::{CommitBatchInfo, StoredBatchInfo};
 use zksync_os_types::ProtocolSemanticVersion;
 
