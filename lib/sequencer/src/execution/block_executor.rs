@@ -15,12 +15,14 @@ use zksync_os_observability::ComponentStateHandle;
 use zksync_os_storage_api::{
     MeteredViewState, OverriddenStateView, ReadStateHistory, ReplayRecord, WriteState,
 };
-use zksync_os_types::{ZkTransaction, ZkTxType, ZksyncOsEncode};
+use zksync_os_types::{ZkEnvelope, ZkTransaction, ZkTxType, ZksyncOsEncode};
 // Note that this is a pure function without a container struct (e.g. `struct BlockExecutor`)
 // MAINTAIN this to ensure the function is completely stateless - explicit or implicit.
 
 // a side effect of this is that it's harder to pass config values (normally we'd just pass the whole config object)
 // please be mindful when adding new parameters here
+
+pub const INTEROP_ROOTS_PER_BLOCK: u64 = 1000;
 
 pub async fn execute_block<R: ReadStateHistory + WriteState>(
     mut command: PreparedBlockCommand<'_>,
@@ -61,6 +63,7 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
         SealPolicy::UntilExhausted { .. } => None,
     };
     let mut deadline: Option<Pin<Box<Sleep>>> = None; // will arm after 1st tx success
+    let mut interop_roots_count = 0;
 
     /* ---------- main loop ------------------------------------------ */
     // seal_reason must only be used for observability - handling must remain generic
@@ -81,9 +84,11 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                 break SealReason::Timeout;                                     // leave the loop ⇒ seal
             }
 
+
             /* -------- stream branch ------------------------------- */
             maybe_tx = command.tx_source.next() => {
                 latency_tracker.enter_state(SequencerState::Execution);
+
                 match maybe_tx {
                     /* ----- got a transaction with gas limit within the block gas limit left --- */
                     Some(tx) if cumulative_gas_used + tx.inner.gas_limit() <= ctx.gas_limit => {
@@ -98,15 +103,31 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                             "Executing transaction..."
                         );
 
-                        if command.is_interop_only_block && tx.tx_type() != ZkTxType::InteropRoots {
-                            match command.seal_policy {
-                                SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true } => {
-                                    break SealReason::InteropOnlyBlock;
+                        match (command.is_interop_only_block, tx.tx_type(), command.seal_policy) {
+                            (false, _, _) => {
+                                // do nothing
+                            }
+                            (true, ZkTxType::InteropRoots, SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true }) => {
+                                let current_interop_roots_count = match tx.inner.inner() {
+                                    ZkEnvelope::InteropRoots(interop_roots_tx) => {
+                                        interop_roots_tx.interop_roots_count()
+                                    }
+                                    _ => 0,
+                                };
+
+                                if interop_roots_count + current_interop_roots_count > INTEROP_ROOTS_PER_BLOCK {
+                                    break SealReason::LimitedInteropOnlyBlock;
                                 }
-                                SealPolicy::UntilExhausted { allowed_to_finish_early: false } => {
-                                    // We trust that the execution stream will not break protocol invariants.
-                                    tracing::info!(block = ctx.block_number, "interop-only block contains non-interop transaction, but seal policy requires full exhaustion");
+                                else {
+                                    interop_roots_count += current_interop_roots_count;
                                 }
+                            }
+                            (true, _, SealPolicy::UntilExhausted { allowed_to_finish_early: false }) => {
+                                // We trust that the execution stream will not break protocol invariants.
+                                tracing::info!(block = ctx.block_number, "interop-only block contains non-interop transaction, but seal policy requires full exhaustion");
+                            },
+                            (true, _, SealPolicy::UntilExhausted { allowed_to_finish_early: true } | SealPolicy::Decide(..)) => {
+                                break SealReason::LimitedInteropOnlyBlock;
                             }
                         }
 
@@ -375,8 +396,8 @@ pub enum SealReason {
     Blobs,
     // We executed upgrade transaction
     UpgradeTx,
-    // Block contains only interop transactions
-    InteropOnlyBlock,
+    // Block contains only interop transactions with a limit of interop roots per block reached
+    LimitedInteropOnlyBlock,
     Other,
 }
 
