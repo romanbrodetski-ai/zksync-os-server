@@ -6,7 +6,9 @@ use alloy::{
     primitives::Address,
     providers::{DynProvider, Provider},
 };
-use zksync_os_contract_interface::{InteropRoot};
+use tokio::sync::mpsc;
+use zksync_os_contract_interface::{InteropRoot, NewInteropRoot};
+use zksync_os_types::InteropRootsEnvelope;
 pub const INTEROP_ROOTS_PER_IMPORT: u64 = 100;
 
 pub struct L1InteropRootsWatcher {
@@ -38,16 +40,15 @@ impl L1InteropRootsWatcher {
         }
     }
 
-    pub async fn run(mut self) -> Result<(), InteropWatcherError> {
+    pub async fn run(mut self) -> anyhow::Result<()> {
         let mut timer = tokio::time::interval(self.poll_interval);
-        while self.should_continue() {
+        loop {
             timer.tick().await;
             self.poll().await?;
         }
-        Ok(())
     }
 
-     async fn fetch_events(
+    async fn fetch_events(
         &mut self,
         from_block: u64,
         to_block: u64,
@@ -58,7 +59,7 @@ impl L1InteropRootsWatcher {
             .to_block(to_block)
             .address(self.contract_address)
             .event_signature(NewInteropRoot::SIGNATURE_HASH);
-        let logs = self.provider.get_logs(&filter).
+        let logs = self.provider.get_logs(&filter).await?;
 
         let mut interop_roots = Vec::new();
         for log in logs {
@@ -90,15 +91,18 @@ impl L1InteropRootsWatcher {
 
         // if we didn't get enough interop roots, it should be safe to continue from the last block we already scanned
         // edge case would be if the last root we included was already in the last block, then we should leave the value as is(it was updated before)
-        if interop_roots.len() < INTEROP_ROOTS_PER_IMPORT as usize  && self.next_log_to_scan_from.0 < to_block {
+        if interop_roots.len() < INTEROP_ROOTS_PER_IMPORT as usize
+            && self.next_log_to_scan_from.0 < to_block
+        {
             self.next_log_to_scan_from = (to_block, 0);
         }
-
 
         Ok(interop_roots)
     }
 
-    async fn poll(&mut self) -> Result<(), InteropWatcherError> {
+    async fn poll(&mut self) -> anyhow::Result<()> {
         let latest_block = self.provider.get_block_number().await?;
+
+        Ok(())
     }
 }
