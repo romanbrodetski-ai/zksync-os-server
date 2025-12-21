@@ -12613,6 +12613,7 @@ dependencies = [
  "zksync_os_genesis",
  "zksync_os_interface",
  "zksync_os_internal_config",
+ "zksync_os_interop_watcher",
  "zksync_os_l1_sender",
  "zksync_os_l1_watcher",
  "zksync_os_mempool",

@@ -42,7 +42,7 @@ use crate::replay_transport::replay_server;
 use crate::state_initializer::StateInitializer;
 use crate::tree_manager::TreeManager;
 use alloy::network::{Ethereum, EthereumWallet};
-use alloy::primitives::BlockNumber;
+use alloy::primitives::{BlockNumber, address};
 use alloy::providers::fillers::{FillProvider, TxFiller};
 use alloy::providers::{Provider, ProviderBuilder, WalletProvider};
 use anyhow::{Context, Result};
@@ -51,7 +51,7 @@ use jsonrpsee::http_client::HttpClient;
 use ruint::aliases::U256;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use zksync_os_batch_verification::{BatchVerificationClient, BatchVerificationPipelineStep};
@@ -62,6 +62,7 @@ use zksync_os_gas_adjuster::GasAdjuster;
 use zksync_os_genesis::{FileGenesisInputSource, Genesis, GenesisInputSource};
 use zksync_os_interface::types::BlockHashes;
 use zksync_os_internal_config::InternalConfigManager;
+use zksync_os_interop_watcher::L1InteropRootsWatcher;
 use zksync_os_l1_sender::commands::commit::CommitCommand;
 use zksync_os_l1_sender::commands::prove::ProofCommand;
 use zksync_os_l1_sender::pipeline_component::L1Sender;
@@ -161,7 +162,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
 
     // Channel between InteropRootsWatcher and Sequencer
     // todo: implement InteropRootsWatcher
-    let (_interop_transactions_sender, interop_transactions_receiver) =
+    let (interop_transactions_sender, interop_transactions_receiver) =
         tokio::sync::mpsc::channel(5);
 
     // Channel between L1UpgradeWatcher and Sequencer
@@ -535,6 +536,19 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         .expect("failed to start L1 upgrade transaction watcher")
         .run()
         .map(report_exit("L1 upgrade transaction watcher")),
+    );
+
+    // ========== Start InteropRootsWatcher ===========
+    tasks.spawn(
+        // todo: pass the real values here
+        L1InteropRootsWatcher::new(
+            node_startup_state.l1_state.diamond_proxy.provider().clone(),
+            address!("0x0000000000000000000000000000000000000000"),
+            Duration::from_secs(5),
+            interop_transactions_sender,
+        )
+        .run()
+        .map(report_exit("Interop roots watcher")),
     );
 
     // ========== Start Sequencer ===========
