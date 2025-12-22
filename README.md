@@ -77,3 +77,36 @@ at your option.
 - [Discord](https://join.zksync.dev/)
 - [Mirror](https://zksync.mirror.xyz/)
 - [Youtube](https://www.youtube.com/@zksync-io)
+
+
+## Interop Demo
+
+Please run (in 3 different terminals):
+(make sure to `rm db/` before !)
+
+This branch has the state from era-contracts: `sb-tmp-hacky-v29-interop` (commit: 8c01fbcd20c1e428ce9811a56452b06658f8f5df)
+
+```
+# Start L1
+anvil --load-state zkos-l1-state.json --port 8545
+
+# Start first L2
+./run_6565.sh
+
+# Start second L2
+./run_6566.sh
+
+```
+
+To test, use the interop-relayer script from `zksync-os-workflows` (sb-try-without-gw branch).
+
+```
+rm interop-state.json
+yarn
+
+# On first terminal:
+./start-watcher.sh
+
+# On second terminal:
+./start-tester.sh
+```
