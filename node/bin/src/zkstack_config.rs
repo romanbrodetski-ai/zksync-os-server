@@ -56,7 +56,7 @@ impl ZkStackConfig {
 
         let wallets_yaml = self.get_yaml_file("configs/wallets.yaml")?;
 
-        let operator = Self::get_private_key("operator", &wallets_yaml)?;
+        let operator = Self::get_private_key("blob_operator", &wallets_yaml)?;
         let prove_operator = Self::get_private_key("prove_operator", &wallets_yaml)?;
         let execute_operator = Self::get_private_key("execute_operator", &wallets_yaml)?;
 
