@@ -128,6 +128,7 @@ impl TxStream for BestTransactionsStream<'_> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum PeekedTxType {
     Upgrade(UpgradeTransaction),

@@ -101,6 +101,38 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                             "Executing transaction..."
                         );
 
+                        if command.is_interop_only_block {
+                            match tx.tx_type() {
+                                ZkTxType::InteropRoots => {
+                                    let current_interop_roots_count = match tx.inner.inner() {
+                                        ZkEnvelope::InteropRoots(interop_roots_tx) => {
+                                            interop_roots_tx.interop_roots_count()
+                                        }
+                                        _ => 0,
+                                    };
+
+                                    if interop_roots_count + current_interop_roots_count > INTEROP_ROOTS_PER_BLOCK {
+                                        if matches!(command.seal_policy, SealPolicy::UntilExhausted { allowed_to_finish_early: false }) {
+                                            // We trust that the execution stream will not break protocol invariants.
+                                            tracing::info!(block = ctx.block_number, "interop block contains too many interop roots, but seal policy requires full exhaustion");
+                                        }
+
+                                        break SealReason::LimitedInteropOnlyBlock;
+                                    }
+
+                                    interop_roots_count += current_interop_roots_count;
+                                }
+                                _ => {
+                                    if matches!(command.seal_policy, SealPolicy::UntilExhausted { allowed_to_finish_early: false }) {
+                                        // We trust that the execution stream will not break protocol invariants.
+                                        tracing::info!(block = ctx.block_number, "interop-only block contains non-interop transaction, but seal policy requires full exhaustion");
+                                    }
+
+                                    break SealReason::LimitedInteropOnlyBlock;
+                                }
+                            }
+                        }
+
                         match (command.is_interop_only_block, tx.tx_type(), command.seal_policy) {
                             (false, _, _) => {
                                 // do nothing
