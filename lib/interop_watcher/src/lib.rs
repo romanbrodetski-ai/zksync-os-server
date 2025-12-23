@@ -7,7 +7,7 @@ use alloy::{
     providers::{DynProvider, Provider},
 };
 use tokio::sync::mpsc;
-use zksync_os_contract_interface::{InteropRoot, NewInteropRoot};
+use zksync_os_contract_interface::{Bridgehub, InteropRoot, NewInteropRoot};
 use zksync_os_types::InteropRootsEnvelope;
 
 pub const INTEROP_ROOTS_PER_IMPORT: u64 = 100;
@@ -26,19 +26,24 @@ pub struct L1InteropRootsWatcher {
 }
 
 impl L1InteropRootsWatcher {
-    pub fn new(
-        provider: DynProvider,
-        contract_address: Address,
+    pub async fn new(
+        bridgehub: Bridgehub<DynProvider>,
         poll_interval: Duration,
         output: mpsc::Sender<InteropRootsEnvelope>,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        let provider = bridgehub.provider().clone();
+        let contract_address = bridgehub
+            .message_root()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get message root: {}", e))?;
+
+        Ok(Self {
             provider,
             contract_address,
             next_log_to_scan_from: None,
             poll_interval,
             output,
-        }
+        })
     }
 
     pub async fn run(mut self) -> anyhow::Result<()> {

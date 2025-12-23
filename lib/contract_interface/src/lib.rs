@@ -42,14 +42,21 @@ alloy::sol! {
         bytes32[] sides;
     }
 
-    event NewInteropRoot (
-        uint256 indexed chainId,
-        uint256 indexed blockNumber,
-        uint256 indexed logId,
-        bytes32[] sides
-    );
+    // `IMessageRoot.sol`
+    interface IMessageRoot {
+        event NewInteropRoot (
+            uint256 indexed chainId,
+            uint256 indexed blockNumber,
+            uint256 indexed logId,
+            bytes32[] sides
+        );
 
-    function addInteropRootsInBatch(InteropRoot[] calldata interopRootsInput);
+        event AppendedChainRoot(uint256 indexed chainId, uint256 indexed batchNumber, bytes32 indexed chainRoot);
+
+        function addInteropRootsInBatch(InteropRoot[] calldata interopRootsInput);
+
+        function addChainBatchRoot(uint256 chainId, uint256 batchNumber, bytes32 messageRoot) external;
+    }
 
     // `ZKChainStorage.sol`
     enum PubdataPricingMode {
@@ -75,6 +82,7 @@ alloy::sol! {
         function chainTypeManager(uint256 _chainId) external view returns (address);
         function sharedBridge() public view returns (address);
         function getAllZKChainChainIDs() external view returns (uint256[] memory);
+        function messageRoot() external view returns (address);
 
         struct L2TransactionRequestDirect {
             uint256 chainId;
@@ -318,6 +326,14 @@ impl<P: Provider + Clone> Bridgehub<P> {
 
     pub fn address(&self) -> &Address {
         self.instance.address()
+    }
+
+    pub fn provider(&self) -> &P {
+        self.instance.provider()
+    }
+
+    pub async fn message_root(&self) -> alloy::contract::Result<Address> {
+        self.instance.messageRoot().call().await
     }
 
     pub async fn chain_type_manager_address(&self) -> alloy::contract::Result<Address> {

@@ -542,8 +542,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     tasks.spawn(
         // todo: pass the real values here
         L1InteropRootsWatcher::new(
-            node_startup_state.l1_state.diamond_proxy.provider().clone(),
-            address!("0x0000000000000000000000000000000000000000"),
+            node_startup_state.l1_state.bridgehub.clone(),
             Duration::from_secs(5),
             interop_transactions_sender,
         )
