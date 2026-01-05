@@ -19,13 +19,7 @@ fn main() {
         if package.name.as_str() != "forward_system" {
             continue;
         }
-        let tag = match parse_git_tag(&package.id) {
-            Ok(tag) => tag,
-            Err(_err) => {
-                println!("cargo:rustc-env=ZKSYNC_OS_0_2_6_SOURCE_PATH={manifest_dir}/apps/v0.2.6");
-                break;
-            }
-        };
+        let tag = parse_git_tag(&package.id).expect("failed to parse git tag");
 
         let dir = format!("{manifest_dir}/apps/{tag}");
         std::fs::create_dir_all(&dir).expect("failed to create directory");
@@ -46,7 +40,12 @@ fn main() {
             std::fs::write(path, body).expect("failed to write file");
         }
 
-        let snake_case_version = tag.trim_start_matches("v").replace('.', "_");
+        let snake_case_version = if tag.starts_with("dev") {
+            String::from("0_2_6")
+        } else {
+            tag.trim_start_matches("v").replace('.', "_")
+        };
+
         println!("cargo:rustc-env=ZKSYNC_OS_{snake_case_version}_SOURCE_PATH={dir}");
     }
 }
