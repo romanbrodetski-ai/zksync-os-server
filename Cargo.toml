@@ -97,12 +97,12 @@ zk_os_basic_system_0_2_4 = { package = "basic_system", git = "https://github.com
 zk_os_forward_system_0_2_4 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.4", features = [
     "production",
     "no_print",
-    "unlimited_native"
 ], default-features = false }
 
 zk_os_forward_system = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260105", features = [
     "production",
     "no_print",
+    "unlimited_native"
 ], default-features = false }
 zk_ee = { package = "zk_ee", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260105" }
 zk_os_basic_system = { package = "basic_system", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260105" }
