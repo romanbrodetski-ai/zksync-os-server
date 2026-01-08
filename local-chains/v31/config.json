@@ -1,12 +1,12 @@
 {
-    "genesis": {
-        "bridgehub_address": "0xb318b56e313d15e61467d894c431ada085a7a5ae",
-        "bytecode_supplier_address": "0xd7313cfbc527956f36c13c1db8f7ce7ef91eb40b",
-        "chain_id": 6565
-    },
-    "l1_sender": {
-        "operator_commit_pk": "0x04375f3e7300f1cd56f016a97fcd11350997eac7f80cb70bb47a094b79c53072",
-        "operator_prove_pk": "0xd5f4976209fb51230643963e53a5f41b2b10c0ea28e99751a70ee0d805b7e752",
-        "operator_execute_pk": "0x6c63ccb67a10f5ab1eba1d361b820f93192906d1dc423d6b922852f76d5b55a7"
-    }
+  "genesis": {
+    "bridgehub_address": "0x2dc055db066dba7ad307bf6973c002da0b3697e7",
+    "bytecode_supplier_address": "0x30844848ea6dee81a32707e03f79ed0ccd1ad51f",
+    "chain_id": 6565
+  },
+  "l1_sender": {
+    "operator_commit_pk": "0x3a8e4bd8ad505ca90ccaeaab184768f5345b275a7b5e77494c8a20c3eb935de4",
+    "operator_prove_pk": "0xb5e041eb8934b17c50667d4cadbf76b36bcacac3e692246de0c84c785b29474e",
+    "operator_execute_pk": "0x935228c98f7275de8dd32db268f67ae603a09be186ca36513433ca950e211ab1"
+  }
 }
