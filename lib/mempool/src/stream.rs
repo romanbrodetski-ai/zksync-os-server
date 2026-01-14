@@ -91,6 +91,11 @@ impl Stream for BestTransactionsStream<'_> {
                     Poll::Ready(None) => todo!("channel closed"),
                 }
             }
+            
+            // If first tx is interop, all the other ones must be interop too.
+            if this.first_tx_is_interop {
+                return Poll::Pending;
+            }
 
             match this.l1_transactions.poll_recv(cx) {
                 Poll::Ready(Some(tx)) => return Poll::Ready(Some(tx.into())),
