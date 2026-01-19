@@ -159,10 +159,6 @@ impl TryFrom<v1::ReplayRecord> for StorageReplayRecord {
 // | Implementations for protocol version 2 |
 // ==========================================
 
-// ==========================================
-// | Implementations for protocol version 2 |
-// ==========================================
-
 impl WireReplayRecord for v2::ReplayRecord {
     fn block_number(&self) -> BlockNumber {
         self.block_context.block_number
