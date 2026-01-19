@@ -1,8 +1,7 @@
 use crate::transaction::l1::L1Envelope;
 use crate::transaction::l2::L2Transaction;
-use crate::transaction::system::envelope::SystemTransactionEnvelope;
-use crate::transaction::{BOOTLOADER_FORMAL_ADDRESS, L1TxType, SystemTxType};
-use crate::{ZkEnvelope, ZkTransaction};
+use crate::transaction::{BOOTLOADER_FORMAL_ADDRESS, INTEROP_ROOTS_TX_TYPE_ID, L1TxType};
+use crate::{InteropRootsEnvelope, ZkEnvelope, ZkTransaction};
 use alloy::consensus::Transaction;
 use alloy::eips::Encodable2718;
 use alloy::primitives::{Address, B256, U256};
@@ -24,7 +23,7 @@ impl<T: L1TxType> ZksyncOsEncode for L1Envelope<T> {
     }
 }
 
-impl<T: SystemTxType> ZksyncOsEncode for SystemTransactionEnvelope<T> {
+impl ZksyncOsEncode for InteropRootsEnvelope {
     fn encode(self) -> EncodedTx {
         EncodedTx::Rlp(self.encoded_2718(), BOOTLOADER_FORMAL_ADDRESS)
     }
@@ -187,22 +186,24 @@ impl From<L2Transaction> for TransactionData {
     }
 }
 
-impl<T: SystemTxType> From<SystemTransactionEnvelope<T>> for TransactionData {
-    fn from(system_tx: SystemTransactionEnvelope<T>) -> Self {
-        let system_tx = system_tx.inner;
+impl From<InteropRootsEnvelope> for TransactionData {
+    fn from(interop_tx: InteropRootsEnvelope) -> Self {
+        let interop_tx = interop_tx.inner;
         TransactionData {
-            tx_type: U256::from(T::TX_TYPE),
+            tx_type: U256::from(INTEROP_ROOTS_TX_TYPE_ID),
             from: BOOTLOADER_FORMAL_ADDRESS,
-            to: system_tx.to,
-            gas_limit: U256::from(system_tx.gas_limit),
+            to: interop_tx.to,
+            gas_limit: U256::from(interop_tx.gas_limit),
             pubdata_price_limit: U256::from(0),
-            max_fee_per_gas: U256::from(system_tx.max_fee_per_gas()),
-            max_priority_fee_per_gas: U256::from(system_tx.max_priority_fee_per_gas().unwrap_or(0)),
+            max_fee_per_gas: U256::from(interop_tx.max_fee_per_gas()),
+            max_priority_fee_per_gas: U256::from(
+                interop_tx.max_priority_fee_per_gas().unwrap_or(0),
+            ),
             paymaster: Address::ZERO,
-            nonce: U256::from(system_tx.nonce()),
-            value: U256::from(system_tx.value()),
+            nonce: U256::from(interop_tx.nonce()),
+            value: U256::from(interop_tx.value()),
             reserved: [U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO],
-            data: system_tx.input.to_vec(),
+            data: interop_tx.input.to_vec(),
             signature: vec![],
             factory_deps: vec![],
             paymaster_input: vec![],

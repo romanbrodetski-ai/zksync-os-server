@@ -7,21 +7,18 @@ use alloy::rpc::types::{AccessList, SignedAuthorization};
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use serde::{Deserialize, Serialize};
 
-use crate::transaction::SystemTxType;
+use crate::transaction::INTEROP_ROOTS_TX_TYPE_ID;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
-#[serde(rename_all = "camelCase", into = "tx_serde::TransactionSerdeHelper<T>")]
-pub struct SystemTransaction<T: SystemTxType> {
+#[serde(rename_all = "camelCase", into = "tx_serde::TransactionSerdeHelper")]
+pub struct InteropRootsTx {
     #[serde(rename = "gas", with = "alloy::serde::quantity")]
     pub gas_limit: u64,
     pub to: Address,
     pub input: Bytes,
-
-    #[serde(skip)]
-    pub marker: std::marker::PhantomData<T>,
 }
 
-impl<T: SystemTxType> SystemTransaction<T> {
+impl InteropRootsTx {
     pub fn calculate_hash(&self) -> B256 {
         keccak256(self.encoded_2718())
     }
@@ -35,7 +32,7 @@ mod tx_serde {
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct TransactionSerdeHelper<T: SystemTxType> {
+    pub struct TransactionSerdeHelper {
         pub hash: TxHash,
         pub initiator: Address,
         pub to: Address,
@@ -49,8 +46,6 @@ mod tx_serde {
         pub nonce: u64,
         pub value: U256,
         pub input: Bytes,
-        #[serde(skip)]
-        pub marker: std::marker::PhantomData<T>,
 
         #[serde(with = "alloy::serde::quantity")]
         pub v: u64,
@@ -61,8 +56,8 @@ mod tx_serde {
     }
 
     // Serialize: inject defaults for (r,s,v,yParity)
-    impl<T: SystemTxType> From<SystemTransaction<T>> for TransactionSerdeHelper<T> {
-        fn from(tx: SystemTransaction<T>) -> Self {
+    impl From<InteropRootsTx> for TransactionSerdeHelper {
+        fn from(tx: InteropRootsTx) -> Self {
             Self {
                 hash: tx.calculate_hash(),
                 initiator: BOOTLOADER_FORMAL_ADDRESS,
@@ -73,8 +68,6 @@ mod tx_serde {
                 nonce: 0,
                 value: U256::ZERO,
                 input: tx.input,
-                marker: std::marker::PhantomData,
-
                 // Put defaults for signature fields
                 v: 0,
                 r: B256::ZERO,
@@ -85,7 +78,7 @@ mod tx_serde {
     }
 }
 
-impl<T: SystemTxType> Transaction for SystemTransaction<T> {
+impl Transaction for InteropRootsTx {
     fn chain_id(&self) -> Option<ChainId> {
         None
     }
@@ -155,13 +148,13 @@ impl<T: SystemTxType> Transaction for SystemTransaction<T> {
     }
 }
 
-impl<T: SystemTxType> Typed2718 for SystemTransaction<T> {
+impl Typed2718 for InteropRootsTx {
     fn ty(&self) -> u8 {
-        T::TX_TYPE
+        INTEROP_ROOTS_TX_TYPE_ID
     }
 }
 
-impl<T: SystemTxType> Encodable2718 for SystemTransaction<T> {
+impl Encodable2718 for InteropRootsTx {
     fn encode_2718_len(&self) -> usize {
         1 + self.length()
     }
@@ -169,12 +162,12 @@ impl<T: SystemTxType> Encodable2718 for SystemTransaction<T> {
     fn encode_2718(&self, out: &mut dyn BufMut) {
         let mut rlp_body = Vec::new();
         Encodable::encode(&self, &mut rlp_body);
-        out.put_u8(T::TX_TYPE);
+        out.put_u8(INTEROP_ROOTS_TX_TYPE_ID);
         out.put_slice(&rlp_body);
     }
 }
 
-impl<T: SystemTxType> RlpEcdsaEncodableTx for SystemTransaction<T> {
+impl RlpEcdsaEncodableTx for InteropRootsTx {
     fn rlp_encoded_fields_length(&self) -> usize {
         self.gas_limit.length() + self.to.length() + self.input.length()
     }
@@ -186,22 +179,20 @@ impl<T: SystemTxType> RlpEcdsaEncodableTx for SystemTransaction<T> {
     }
 }
 
-impl<T: SystemTxType> RlpEcdsaDecodableTx for SystemTransaction<T> {
-    const DEFAULT_TX_TYPE: u8 = T::TX_TYPE;
+impl RlpEcdsaDecodableTx for InteropRootsTx {
+    const DEFAULT_TX_TYPE: u8 = INTEROP_ROOTS_TX_TYPE_ID;
 
     fn rlp_decode_fields(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
         Ok(Self {
             gas_limit: Decodable::decode(buf)?,
             to: Decodable::decode(buf)?,
             input: Decodable::decode(buf)?,
-
-            marker: std::marker::PhantomData,
         })
     }
 }
 
 // if something goes wrong with encoding, there's a chance that something is wrong here
-impl<T: SystemTxType> Encodable for SystemTransaction<T> {
+impl Encodable for InteropRootsTx {
     fn encode(&self, out: &mut dyn BufMut) {
         self.rlp_encode(out);
     }
