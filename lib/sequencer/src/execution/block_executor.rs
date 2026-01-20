@@ -10,7 +10,7 @@ use std::pin::Pin;
 use tokio::time::Sleep;
 use vise::EncodeLabelValue;
 use zksync_os_interface::error::InvalidTransaction;
-use zksync_os_interface::types::BlockOutput;
+use zksync_os_interface::types::{BlockContext, BlockOutput};
 use zksync_os_metadata::NODE_SEMVER_VERSION;
 use zksync_os_observability::ComponentStateHandle;
 use zksync_os_storage_api::{
@@ -91,7 +91,7 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                 latency_tracker.enter_state(SequencerState::Execution);
                 match maybe_tx {
                     /* ----- got a transaction with gas limit within the block gas limit left --- */
-                    Some(tx) if cumulative_gas_used + tx.inner.gas_limit() <= ctx.gas_limit => {
+                    Some(tx) if should_exclude_and_seal(&ctx, cumulative_gas_used, interop_roots_count, &tx).is_none() => {
 
                         tracing::debug!(
                             block_number=command.block_context.block_number,
@@ -102,34 +102,6 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                             signer=?tx.inner.signer(),
                             "Executing transaction..."
                         );
-
-                        match (command.is_interop_only_block, tx.tx_type(), command.seal_policy) {
-                            (false, _, _) => {
-                                // do nothing
-                            }
-                            (true, ZkTxType::InteropRoots, SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true }) => {
-                                let current_interop_roots_count = match tx.inner.inner() {
-                                    ZkEnvelope::InteropRoots(interop_roots_tx) => {
-                                        interop_roots_tx.interop_roots_count()
-                                    }
-                                    _ => 0,
-                                };
-
-                                if interop_roots_count + current_interop_roots_count > INTEROP_ROOTS_PER_BLOCK {
-                                    break SealReason::LimitedInteropOnlyBlock;
-                                }
-                                else {
-                                    interop_roots_count += current_interop_roots_count;
-                                }
-                            }
-                            (true, _, SealPolicy::UntilExhausted { allowed_to_finish_early: false }) => {
-                                // We trust that the execution stream will not break protocol invariants.
-                                tracing::info!(block_number = ctx.block_number, "interop-only block contains non-interop transaction, but seal policy requires full exhaustion");
-                            },
-                            (true, _, SealPolicy::UntilExhausted { allowed_to_finish_early: true } | SealPolicy::Decide(..)) => {
-                                break SealReason::LimitedInteropOnlyBlock;
-                            }
-                        }
 
                         all_processed_txs.push(tx.clone());
                         match runner.execute_next_tx(tx.clone().encode())
@@ -155,9 +127,13 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                                     "Transaction executed"
                                 );
 
-                                // todo: not sure this should be the same way for rebuild
-                                if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner() && matches!(command.seal_policy, SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true }) {
-                                    last_interop_event_index = interop_roots_tx.last_log_index.clone();
+                                if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner() {
+                                    interop_roots_count += interop_roots_tx.interop_roots_count();
+
+                                    // todo: not sure this should be the same way for rebuild.
+                                    if matches!(command.seal_policy, SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true }) {
+                                        last_interop_event_index = interop_roots_tx.last_log_index.clone();
+                                    }
                                 }
 
                                 let tx_type = tx.tx_type();
@@ -245,10 +221,10 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
                             }
                         }
                     }
-                    /* ----- got a transaction that cannot be included because of gas --- */
-                    Some(_tx) => {
+                    /* ----- got a transaction that cannot be included because of gas or interop roots amount --- */
+                    Some(tx) => {
                         tracing::debug!(block_number = ctx.block_number, "sealing block as next tx cannot be included");
-                        break SealReason::GasLimit;
+                        break should_exclude_and_seal(&ctx, cumulative_gas_used, interop_roots_count, &tx).unwrap();
                     }
                     /* ----- tx stream was exhausted  --------------------------- */
                     None => {
@@ -382,6 +358,23 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
         ),
         purged_txs,
     ))
+}
+
+fn should_exclude_and_seal(
+    ctx: &BlockContext,
+    cumulative_gas_used: u64,
+    interop_roots_count: u64,
+    tx: &ZkTransaction,
+) -> Option<SealReason> {
+    if cumulative_gas_used + tx.inner.gas_limit() > ctx.gas_limit {
+        return Some(SealReason::GasLimit);
+    }
+    if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner()
+        && interop_roots_count + interop_roots_tx.interop_roots_count() > INTEROP_ROOTS_PER_BLOCK
+    {
+        return Some(SealReason::LimitedInteropOnlyBlock);
+    }
+    None
 }
 
 enum TxRejectionMethod {

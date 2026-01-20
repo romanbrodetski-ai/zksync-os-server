@@ -184,12 +184,6 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
                     &self.blob_fill_ratio_provider,
                 );
 
-                let eip1559_basefee = if is_interop_only_block {
-                    U256::ZERO
-                } else {
-                    eip1559_basefee
-                };
-
                 let block_context = BlockContext {
                     eip1559_basefee,
                     native_price,
