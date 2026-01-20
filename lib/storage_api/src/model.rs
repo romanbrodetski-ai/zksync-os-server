@@ -80,7 +80,7 @@ impl ReplayRecord {
 
         let first_interop_event_index = transactions.iter().find_map(|tx| match tx.envelope() {
             ZkEnvelope::InteropRoots(interop_roots_tx) => {
-                Some(interop_roots_tx.last_log_index.clone())
+                Some(interop_roots_tx.first_log_index.clone())
             }
             ZkEnvelope::L1(_) => None,
             ZkEnvelope::L2(_) => None,
@@ -88,9 +88,9 @@ impl ReplayRecord {
         });
 
         if let Some(first_interop_event_index) = first_interop_event_index {
-            assert_eq!(
-                first_interop_event_index, starting_interop_event_index,
-                "First interop event index must match starting_interop_event_index"
+            assert!(
+                first_interop_event_index >= starting_interop_event_index,
+                "First interop event index must be greater than or equal to starting_interop_event_index"
             );
         }
 
