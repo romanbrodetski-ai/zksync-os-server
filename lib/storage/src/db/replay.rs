@@ -43,7 +43,7 @@ pub enum BlockReplayColumnFamily {
     ProtocolVersion,
     ForcePreimages,
     BlockOutputHash,
-    NextInteropEventIndex,
+    StartingInteropEventIndex,
     /// Stores the latest appended block number under a fixed key.
     Latest,
 }
@@ -58,7 +58,7 @@ impl NamedColumnFamily for BlockReplayColumnFamily {
         BlockReplayColumnFamily::ProtocolVersion,
         BlockReplayColumnFamily::BlockOutputHash,
         BlockReplayColumnFamily::ForcePreimages,
-        BlockReplayColumnFamily::NextInteropEventIndex,
+        BlockReplayColumnFamily::StartingInteropEventIndex,
         BlockReplayColumnFamily::Latest,
     ];
 
@@ -71,7 +71,7 @@ impl NamedColumnFamily for BlockReplayColumnFamily {
             BlockReplayColumnFamily::ProtocolVersion => "protocol_version",
             BlockReplayColumnFamily::BlockOutputHash => "block_output_hash",
             BlockReplayColumnFamily::ForcePreimages => "force_preimages",
-            BlockReplayColumnFamily::NextInteropEventIndex => "next_interop_event_index",
+            BlockReplayColumnFamily::StartingInteropEventIndex => "starting_interop_event_index",
             BlockReplayColumnFamily::Latest => "latest",
         }
     }
@@ -170,15 +170,15 @@ impl BlockReplayStorage {
             &force_preimages_value,
         );
 
-        let next_interop_event_index_value = bincode::serde::encode_to_vec(
+        let starting_interop_event_index_value = bincode::serde::encode_to_vec(
             &record.starting_interop_event_index,
             bincode::config::standard(),
         )
-        .expect("Failed to serialize record.next_interop_event_index");
+        .expect("Failed to serialize record.starting_interop_event_index");
         batch.put_cf(
-            BlockReplayColumnFamily::NextInteropEventIndex,
+            BlockReplayColumnFamily::StartingInteropEventIndex,
             &db_key,
-            &next_interop_event_index_value,
+            &starting_interop_event_index_value,
         );
 
         self.db
@@ -309,16 +309,16 @@ impl ReadReplay for BlockReplayStorage {
             .expect("Failed to read from BlockOutputHash CF")
             .expect("BlockOutputHash must be written atomically with Context");
 
-        let next_interop_event_index = if let Some(next_interop_event_index) = self
+        let starting_interop_event_index = if let Some(starting_interop_event_index) = self
             .db
-            .get_cf(BlockReplayColumnFamily::NextInteropEventIndex, &key)
-            .expect("Failed to read from NextInteropEventIndex CF")
+            .get_cf(BlockReplayColumnFamily::StartingInteropEventIndex, &key)
+            .expect("Failed to read from StartingInteropEventIndex CF")
         {
             let stored: InteropRootsLogIndex = bincode::serde::decode_from_slice(
-                &next_interop_event_index,
+                &starting_interop_event_index,
                 bincode::config::standard(),
             )
-            .expect("Failed to deserialize next interop event index")
+            .expect("Failed to deserialize starting interop event index")
             .0;
             stored
         } else {
@@ -349,7 +349,7 @@ impl ReadReplay for BlockReplayStorage {
             protocol_version,
             block_output_hash: B256::from_slice(&block_output_hash),
             force_preimages,
-            starting_interop_event_index: next_interop_event_index,
+            starting_interop_event_index,
         })
     }
 
