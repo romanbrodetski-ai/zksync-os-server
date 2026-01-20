@@ -193,7 +193,7 @@ impl From<InteropRootsEnvelope> for TransactionData {
             tx_type: U256::from(INTEROP_ROOTS_TX_TYPE_ID),
             from: BOOTLOADER_FORMAL_ADDRESS,
             to: interop_tx.to,
-            gas_limit: U256::from(interop_tx.gas_limit),
+            gas_limit: U256::from(interop_tx.gas_limit()),
             pubdata_price_limit: U256::from(0),
             max_fee_per_gas: U256::from(interop_tx.max_fee_per_gas()),
             max_priority_fee_per_gas: U256::from(

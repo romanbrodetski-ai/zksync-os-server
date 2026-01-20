@@ -12,8 +12,6 @@ use crate::transaction::INTEROP_ROOTS_TX_TYPE_ID;
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", into = "tx_serde::TransactionSerdeHelper")]
 pub struct InteropRootsTx {
-    #[serde(rename = "gas", with = "alloy::serde::quantity")]
-    pub gas_limit: u64,
     pub to: Address,
     pub input: Bytes,
 }
@@ -62,11 +60,11 @@ mod tx_serde {
                 hash: tx.calculate_hash(),
                 initiator: BOOTLOADER_FORMAL_ADDRESS,
                 to: tx.to,
-                gas_limit: tx.gas_limit,
-                max_fee_per_gas: 0,
-                max_priority_fee_per_gas: 0,
-                nonce: 0,
-                value: U256::ZERO,
+                gas_limit: tx.gas_limit(),
+                max_fee_per_gas: tx.max_fee_per_gas(),
+                max_priority_fee_per_gas: tx.max_priority_fee_per_gas().unwrap_or(0),
+                nonce: tx.nonce(),
+                value: tx.value(),
                 input: tx.input,
                 // Put defaults for signature fields
                 v: 0,
@@ -88,7 +86,7 @@ impl Transaction for InteropRootsTx {
     }
 
     fn gas_limit(&self) -> u64 {
-        self.gas_limit
+        0
     }
 
     fn gas_price(&self) -> Option<u128> {
@@ -169,11 +167,10 @@ impl Encodable2718 for InteropRootsTx {
 
 impl RlpEcdsaEncodableTx for InteropRootsTx {
     fn rlp_encoded_fields_length(&self) -> usize {
-        self.gas_limit.length() + self.to.length() + self.input.length()
+        self.to.length() + self.input.length()
     }
 
     fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
-        self.gas_limit.encode(out);
         self.to.encode(out);
         self.input.encode(out);
     }
@@ -184,7 +181,6 @@ impl RlpEcdsaDecodableTx for InteropRootsTx {
 
     fn rlp_decode_fields(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
         Ok(Self {
-            gas_limit: Decodable::decode(buf)?,
             to: Decodable::decode(buf)?,
             input: Decodable::decode(buf)?,
         })
