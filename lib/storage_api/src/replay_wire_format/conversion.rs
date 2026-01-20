@@ -288,7 +288,7 @@ impl From<ReplayWireFormatV6> for ReplayRecord {
             block_output_hash,
             protocol_version,
             force_preimages,
-            next_interop_event_index,
+            starting_interop_event_index,
         } = value;
         let super::v6::BlockContext {
             chain_id,
@@ -328,7 +328,7 @@ impl From<ReplayWireFormatV6> for ReplayRecord {
             protocol_version,
             block_output_hash,
             force_preimages,
-            starting_interop_event_index: next_interop_event_index,
+            starting_interop_event_index,
         }
     }
 }
@@ -344,7 +344,7 @@ impl From<ReplayRecord> for ReplayWireFormatV6 {
             block_output_hash,
             protocol_version,
             force_preimages,
-            starting_interop_event_index: next_interop_event_index,
+            starting_interop_event_index,
         } = value;
         let BlockContext {
             chain_id,
@@ -384,7 +384,7 @@ impl From<ReplayRecord> for ReplayWireFormatV6 {
             block_output_hash,
             protocol_version,
             force_preimages,
-            next_interop_event_index,
+            starting_interop_event_index,
         }
     }
 }
