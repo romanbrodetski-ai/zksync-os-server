@@ -27,11 +27,11 @@ pub struct InteropRootsEnvelope {
     /// Stored in an envelope and calculated separately from transaction as hash of transaction is not part of transaction itself.
     #[serde(skip)]
     pub hash: B256,
-    /// Log index of the last event from which the transaction was created.
+    /// Log index of the first event from which the transaction was created.
     /// In case we use demo-version, it is the index of the only one event in transaction.
     /// Stored in an envelope to be able to easier keep track of it, but it is not part of the transaction
     #[serde(skip)]
-    pub last_log_index: InteropRootsLogIndex,
+    pub first_log_index: InteropRootsLogIndex,
     #[serde(flatten)]
     pub inner: InteropRootsTx,
 }
@@ -68,7 +68,7 @@ impl Decodable for InteropRootsLogIndex {
 impl InteropRootsEnvelope {
     pub fn from_interop_roots(
         interop_roots: Vec<InteropRoot>,
-        last_log_index: InteropRootsLogIndex,
+        first_log_index: InteropRootsLogIndex,
         is_gateway: bool,
     ) -> Self {
         let calldata = if is_gateway {
@@ -96,7 +96,7 @@ impl InteropRootsEnvelope {
 
         Self {
             hash: transaction.calculate_hash(),
-            last_log_index,
+            first_log_index,
             inner: transaction,
         }
     }
@@ -126,12 +126,12 @@ impl Typed2718 for InteropRootsEnvelope {
 
 impl RlpEcdsaEncodableTx for InteropRootsEnvelope {
     fn rlp_encoded_fields_length(&self) -> usize {
-        self.inner.rlp_encoded_fields_length() + self.last_log_index.length()
+        self.inner.rlp_encoded_fields_length() + self.first_log_index.length()
     }
 
     fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
         self.inner.rlp_encode_fields(out);
-        self.last_log_index.encode(out);
+        self.first_log_index.encode(out);
     }
 }
 
@@ -143,7 +143,7 @@ impl RlpEcdsaDecodableTx for InteropRootsEnvelope {
         let last_log_index = <InteropRootsLogIndex as Decodable>::decode(buf)?;
         Ok(Self {
             hash: transaction.calculate_hash(),
-            last_log_index,
+            first_log_index: last_log_index,
             inner: transaction,
         })
     }
@@ -152,22 +152,22 @@ impl RlpEcdsaDecodableTx for InteropRootsEnvelope {
 impl Encodable for InteropRootsEnvelope {
     fn encode(&self, out: &mut dyn BufMut) {
         self.inner.encode(out);
-        self.last_log_index.encode(out);
+        self.first_log_index.encode(out);
     }
 
     fn length(&self) -> usize {
-        self.inner.length() + self.last_log_index.length()
+        self.inner.length() + self.first_log_index.length()
     }
 }
 
 impl Encodable2718 for InteropRootsEnvelope {
     fn encode_2718_len(&self) -> usize {
-        self.inner.encode_2718_len() + self.last_log_index.length()
+        self.inner.encode_2718_len() + self.first_log_index.length()
     }
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
         self.inner.encode_2718(out);
-        self.last_log_index.encode(out);
+        self.first_log_index.encode(out);
     }
 }
 
@@ -186,7 +186,7 @@ impl Decodable2718 for InteropRootsEnvelope {
 
         Ok(Self {
             hash,
-            last_log_index,
+            first_log_index: last_log_index,
             inner: transaction,
         })
     }
@@ -285,7 +285,7 @@ mod tests {
 
         let tx = InteropRootsEnvelope {
             hash: transaction.calculate_hash(),
-            last_log_index: InteropRootsLogIndex::default(),
+            first_log_index: InteropRootsLogIndex::default(),
             inner: transaction,
         };
 
