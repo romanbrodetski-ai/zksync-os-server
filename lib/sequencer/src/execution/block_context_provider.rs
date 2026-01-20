@@ -368,10 +368,12 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
         for tx in &replay_record.transactions {
             match tx.envelope() {
                 ZkEnvelope::InteropRoots(interop_tx) => {
+                    self.last_interop_event_index = interop_tx.event_log_index();
                     if matches!(
                         cmd_type,
                         BlockCommandType::Rebuild | BlockCommandType::Replay
                     ) {
+                        tracing::error!("INTEROP TX HASH GOT FROM REPLAY RECORD {:?}, INDEX: {:?}", interop_tx.hash, interop_tx.event_log_index);
                         let tx = self.interop_transactions.recv().await.unwrap();
                         assert_eq!(tx.hash, interop_tx.hash);
                         assert_eq!(tx.inner, interop_tx.inner);

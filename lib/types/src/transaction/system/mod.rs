@@ -6,6 +6,7 @@ use alloy::sol_types::SolCall;
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use serde::{Deserialize, Serialize};
 use zksync_os_contract_interface::{IMessageRoot::addInteropRootCall, InteropRoot};
+use alloy::consensus::transaction::{RlpEcdsaDecodableTx, RlpEcdsaEncodableTx};
 //use zksync_os_contract_interface::IMessageRoot::addInteropRootsInBatchCall;
 
 pub mod envelope;
@@ -34,23 +35,20 @@ impl InteropRootsLogIndex {
 
 impl Encodable for InteropRootsLogIndex {
     fn encode(&self, out: &mut dyn BufMut) {
-        vec![self.block_number, self.log_index].encode(out);
+        self.block_number.encode(out);
+        self.log_index.encode(out);
     }
 
     fn length(&self) -> usize {
-        vec![self.block_number, self.log_index].length()
+        self.block_number.length() + self.log_index.length()
     }
 }
 
 impl Decodable for InteropRootsLogIndex {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let vec: Vec<u64> = Vec::decode(buf)?;
-        let array: [u64; 2] = vec
-            .try_into()
-            .map_err(|_| alloy::rlp::Error::Custom("expected array of length 2"))?;
         Ok(Self {
-            block_number: array[0],
-            log_index: array[1],
+            block_number: Decodable::decode(buf)?,
+            log_index: Decodable::decode(buf)?,
         })
     }
 }

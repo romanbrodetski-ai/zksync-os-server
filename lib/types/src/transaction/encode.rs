@@ -26,7 +26,7 @@ impl<T: L1TxType> ZksyncOsEncode for L1Envelope<T> {
 
 impl<T: SystemTxType> ZksyncOsEncode for SystemTransactionEnvelope<T> {
     fn encode(self) -> EncodedTx {
-        EncodedTx::Rlp(self.encoded_2718(), BOOTLOADER_FORMAL_ADDRESS)
+        EncodedTx::Rlp(self.inner.encoded_2718(), BOOTLOADER_FORMAL_ADDRESS)
     }
 }
 

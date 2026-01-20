@@ -5,7 +5,7 @@ use alloy::eips::{Decodable2718, Encodable2718};
 use alloy::primitives::ChainId;
 use alloy::primitives::{B256, Bytes, TxKind, U256};
 use alloy::rpc::types::{AccessList, SignedAuthorization};
-use alloy_rlp::{BufMut, Encodable};
+use alloy_rlp::{BufMut, Decodable, Encodable};
 use serde::{Deserialize, Serialize};
 
 use crate::transaction::system::tx::SystemTransaction;
@@ -40,11 +40,12 @@ impl<T: SystemTxType> Typed2718 for SystemTransactionEnvelope<T> {
 
 impl<T: SystemTxType> RlpEcdsaEncodableTx for SystemTransactionEnvelope<T> {
     fn rlp_encoded_fields_length(&self) -> usize {
-        self.inner.rlp_encoded_fields_length()
+        self.inner.rlp_encoded_fields_length() + self.event_log_index.length()
     }
 
     fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
         self.inner.rlp_encode_fields(out);
+        self.event_log_index.encode(out);
     }
 }
 
@@ -53,10 +54,11 @@ impl<T: SystemTxType> RlpEcdsaDecodableTx for SystemTransactionEnvelope<T> {
 
     fn rlp_decode_fields(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
         let transaction = SystemTransaction::<T>::rlp_decode_fields(buf)?;
+        let event_log_index = <InteropRootsLogIndex as Decodable>::decode(buf)?;
         Ok(Self {
             hash: transaction.calculate_hash(),
             // doesn't look right
-            event_log_index: InteropRootsLogIndex::default(),
+            event_log_index,
             inner: transaction,
         })
     }
@@ -65,20 +67,24 @@ impl<T: SystemTxType> RlpEcdsaDecodableTx for SystemTransactionEnvelope<T> {
 impl<T: SystemTxType> Encodable for SystemTransactionEnvelope<T> {
     fn encode(&self, out: &mut dyn BufMut) {
         self.inner.encode(out);
+        self.event_log_index.encode(out);
     }
 
     fn length(&self) -> usize {
         self.inner.length()
+            + self.event_log_index.length()
     }
 }
 
 impl<T: SystemTxType> Encodable2718 for SystemTransactionEnvelope<T> {
     fn encode_2718_len(&self) -> usize {
         self.inner.encode_2718_len()
+            + self.event_log_index.length()
     }
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
         self.inner.encode_2718(out);
+        self.event_log_index.encode(out);
     }
 }
 
@@ -91,15 +97,14 @@ impl<T: SystemTxType> Decodable2718 for SystemTransactionEnvelope<T> {
         let transaction = SystemTransaction::<T>::rlp_decode(buf)
             .map_err(|_| Eip2718Error::RlpError(alloy::rlp::Error::Custom("decode failed")))?;
 
+        let event_log_index = <InteropRootsLogIndex as Decodable>::decode(buf)?;
+
         let hash = transaction.calculate_hash();
 
         Ok(Self {
             hash,
             // doesn't look right
-            event_log_index: InteropRootsLogIndex {
-                block_number: 0,
-                log_index: 0,
-            },
+            event_log_index,
             inner: transaction,
         })
     }

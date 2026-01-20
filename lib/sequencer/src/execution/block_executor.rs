@@ -372,6 +372,15 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
         });
     }
 
+    for tx in &executed_txs {
+        match tx.envelope() {
+            ZkEnvelope::InteropRoots(interop_tx) => {
+                tracing::error!("INTEROP TX HASH {:?}, INDEX: {:?}", interop_tx.hash, interop_tx.event_log_index);
+            }
+            _ => {}
+        }
+    }
+
     Ok((
         output,
         ReplayRecord::new(
