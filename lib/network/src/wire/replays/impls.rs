@@ -206,7 +206,7 @@ impl From<StorageReplayRecord> for v2::ReplayRecord {
                     preimage: Bytes::from(preimage),
                 })
                 .collect(),
-            next_interop_event_index: value.starting_interop_event_index,
+            starting_interop_event_index: value.starting_interop_event_index,
         }
     }
 }
@@ -253,7 +253,7 @@ impl TryFrom<v2::ReplayRecord> for StorageReplayRecord {
                 .into_iter()
                 .map(|p| (p.hash, p.preimage.into()))
                 .collect(),
-            starting_interop_event_index: value.next_interop_event_index,
+            starting_interop_event_index: value.starting_interop_event_index,
         })
     }
 }

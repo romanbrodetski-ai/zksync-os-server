@@ -28,7 +28,7 @@ pub struct ReplayWireFormatV6 {
     #[bincode(with_serde)]
     pub force_preimages: Vec<(B256, Vec<u8>)>,
     #[bincode(with_serde)]
-    pub next_interop_event_index: InteropRootsLogIndex,
+    pub starting_interop_event_index: InteropRootsLogIndex,
 }
 
 #[derive(Encode, Decode)]

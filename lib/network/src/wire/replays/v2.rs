@@ -18,7 +18,7 @@ pub struct ReplayRecord {
     pub protocol_version: ProtocolSemanticVersion,
     pub block_output_hash: B256,
     pub force_preimages: Vec<ForcedPreimage>,
-    pub next_interop_event_index: InteropRootsLogIndex,
+    pub starting_interop_event_index: InteropRootsLogIndex,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
