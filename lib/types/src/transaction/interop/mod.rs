@@ -132,7 +132,9 @@ impl Typed2718 for InteropRootsEnvelope {
 
 impl RlpEcdsaEncodableTx for InteropRootsEnvelope {
     fn rlp_encoded_fields_length(&self) -> usize {
-        self.inner.rlp_encoded_fields_length() + self.first_log_index.length() + self.last_log_index.length()
+        self.inner.rlp_encoded_fields_length()
+            + self.first_log_index.length()
+            + self.last_log_index.length()
     }
 
     fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
