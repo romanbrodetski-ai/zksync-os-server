@@ -436,10 +436,10 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         .as_ref()
         .map_or(0, |record| record.starting_l1_priority_id);
 
-    let last_interop_event_index = first_replay_record
+    let starting_interop_event_index = first_replay_record
         .as_ref()
         .map_or(InteropRootsLogIndex::default(), |record| {
-            record.last_interop_event_index.clone()
+            record.starting_interop_event_index.clone()
         });
 
     tasks.spawn(
@@ -460,8 +460,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         InteropRootsWatcher::new(
             node_startup_state.l1_state.bridgehub.clone(),
             interop_transactions_sender,
-            last_interop_event_index,
-            false,
+            starting_interop_event_index,
         )
         .await
         .expect("failed to start L1 interop roots watcher")
