@@ -12,7 +12,6 @@ use zksync_os_contract_interface::{Bridgehub, InteropRoot};
 use zksync_os_types::{InteropRootsEnvelope, InteropRootsLogIndex};
 
 pub const INTEROP_ROOTS_PER_IMPORT: u64 = 100;
-const LOOKBEHIND_BLOCKS: u64 = 1000;
 
 const TOO_MANY_RESULTS_INFURA: &str = "query returned more than";
 const TOO_MANY_RESULTS_ALCHEMY: &str = "response size exceeded";
@@ -20,6 +19,7 @@ const TOO_MANY_RESULTS_RETH: &str = "length limit exceeded";
 const TOO_BIG_RANGE_RETH: &str = "query exceeds max block range";
 const TOO_MANY_RESULTS_CHAINSTACK: &str = "range limit exceeded";
 const REQUEST_REJECTED_503: &str = "Request rejected `503`";
+const RETRY_LIMIT: u8 = 5;
 
 pub struct InteropRootsWatcher {
     contract_address: Address,
@@ -62,7 +62,9 @@ impl InteropRootsWatcher {
         start_log_index: InteropRootsLogIndex,
         to_block: u64,
     ) -> anyhow::Result<(Vec<InteropRoot>, InteropRootsLogIndex)> {
-        let logs = self.get_events_recursively(start_log_index.block_number, to_block).await?;
+        let logs = self
+            .get_events_recursively(start_log_index.block_number, to_block, RETRY_LIMIT)
+            .await?;
 
         if logs.is_empty() {
             return Ok((Vec::new(), InteropRootsLogIndex::default()));
@@ -125,11 +127,13 @@ impl InteropRootsWatcher {
         Ok((interop_roots, last_log_index))
     }
 
+    // this was mostly copy-pasted from zksync-era, since we want to capture as much of logs as possible
     #[async_recursion::async_recursion]
     async fn get_events_recursively(
         &mut self,
         from_block: u64,
         to_block: u64,
+        retries_left: u8,
     ) -> anyhow::Result<Vec<Log>> {
         let filter = Filter::new()
             .from_block(from_block)
@@ -148,16 +152,29 @@ impl InteropRootsWatcher {
                         || error_resp.message.contains(TOO_MANY_RESULTS_RETH)
                         || error_resp.message.contains(TOO_BIG_RANGE_RETH)
                         || error_resp.message.contains(TOO_MANY_RESULTS_CHAINSTACK)
-                        || error_resp.message.contains(REQUEST_REJECTED_503)) // maybe here also should be timeout
+                        || error_resp.message.contains(REQUEST_REJECTED_503))
+                // maybe here also should be timeout
                 {
                     let mid = (from_block + to_block) / 2;
-                    let mut first_half = self.get_events_recursively(from_block, mid).await?;
-                    let mut second_half = self.get_events_recursively(mid + 1, to_block).await?;
+                    let mut first_half = self
+                        .get_events_recursively(from_block, mid, RETRY_LIMIT)
+                        .await?;
+                    let mut second_half = self
+                        .get_events_recursively(mid + 1, to_block, RETRY_LIMIT)
+                        .await?;
                     first_half.append(&mut second_half);
                     return Ok(first_half);
-                }
-                else {
-                    return Err(err.into());
+                } else {
+                    if let Some(error) = err.as_transport_err()
+                        && error.is_retry_err()
+                        && retries_left > 0
+                    {
+                        return self
+                            .get_events_recursively(from_block, to_block, retries_left - 1)
+                            .await;
+                    } else {
+                        return Err(anyhow::anyhow!("Failed to get events: {}", err));
+                    }
                 }
             }
         }
@@ -165,15 +182,6 @@ impl InteropRootsWatcher {
 
     async fn poll(&mut self) -> anyhow::Result<()> {
         let latest_block = self.provider.get_block_number().await?;
-
-        if self.next_log_to_scan_from.block_number + LOOKBEHIND_BLOCKS < latest_block {
-            tracing::warn!(
-                from_block = self.next_log_to_scan_from.block_number,
-                latest_block,
-                "From block is found to be behind the latest block by more than {}, it shouldn't happen normally",
-                LOOKBEHIND_BLOCKS
-            );
-        }
 
         let (interop_roots, last_log_index) = self
             .fetch_events(self.next_log_to_scan_from.clone(), latest_block)
