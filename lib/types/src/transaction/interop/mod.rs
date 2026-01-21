@@ -68,11 +68,16 @@ impl InteropRootsEnvelope {
         interop_roots: Vec<InteropRoot>,
         last_log_index: InteropRootsLogIndex,
     ) -> Self {
-        let calldata = 
-            addInteropRootsInBatchCall {
-                interopRootsInput: interop_roots,
-            }
-            .abi_encode();
+        assert_eq!(
+            interop_roots.len(),
+            1,
+            "Sequencer doesn't support multiple interop roots in single transaction yet"
+        );
+
+        let calldata = addInteropRootsInBatchCall {
+            interopRootsInput: interop_roots,
+        }
+        .abi_encode();
 
         let transaction = InteropRootsTx {
             to: L2_INTEROP_ROOT_STORAGE_ZKSYNC_OS_ADDRESS,
@@ -87,7 +92,15 @@ impl InteropRootsEnvelope {
     }
 
     pub fn interop_roots_count(&self) -> u64 {
-        addInteropRootsInBatchCall::abi_decode(&self.inner.input).expect("Failed to decode interop roots calldata").interopRootsInput.len() as u64
+        let interop_roots_count = addInteropRootsInBatchCall::abi_decode(&self.inner.input)
+            .expect("Failed to decode interop roots calldata")
+            .interopRootsInput
+            .len() as u64;
+        assert_eq!(
+            interop_roots_count, 1,
+            "Sequencer doesn't support multiple interop roots in single transaction yet"
+        );
+        interop_roots_count
     }
 
     pub fn hash(&self) -> &B256 {
@@ -103,8 +116,7 @@ impl Typed2718 for InteropRootsEnvelope {
 
 impl RlpEcdsaEncodableTx for InteropRootsEnvelope {
     fn rlp_encoded_fields_length(&self) -> usize {
-        self.inner.rlp_encoded_fields_length()
-            + self.last_log_index.length()
+        self.inner.rlp_encoded_fields_length() + self.last_log_index.length()
     }
 
     fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
