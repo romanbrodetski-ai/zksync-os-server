@@ -88,146 +88,140 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
             /* -------- stream branch ------------------------------- */
             maybe_tx = command.tx_source.next() => {
                 latency_tracker.enter_state(SequencerState::Execution);
-                match maybe_tx {
-                    /* ----- got a transaction with gas limit within the block gas limit left --- */
-                    Some(tx) if should_exclude_and_seal(&ctx, cumulative_gas_used, interop_roots_count, &tx).is_none() => {
+                let Some(tx) = maybe_tx else {
+                    tracing::debug!(
+                        block_number = ctx.block_number,
+                        txs = executed_txs.len(),
+                        "stream exhausted → sealing"
+                    );
+                    break SealReason::TxStreamExhausted;
+                };
 
+                if let Some(reason) = should_exclude_and_seal(&ctx, cumulative_gas_used, interop_roots_count, &tx) {
+                    tracing::debug!(block_number = ctx.block_number, "sealing block as next tx cannot be included");
+                    break reason;
+                }
+
+                tracing::debug!(
+                    block_number=command.block_context.block_number,
+                    tx_hash=?tx.hash(),
+                    tx_index_in_block=executed_txs.len(),
+                    cumulative_gas_used_before=cumulative_gas_used,
+                    gas_limit=tx.inner.gas_limit(),
+                    signer=?tx.inner.signer(),
+                    "Executing transaction..."
+                );
+
+                all_processed_txs.push(tx.clone());
+                match runner.execute_next_tx(tx.clone().encode())
+                    .await
+                    .map_err(|e| {
+                        BlockDump {
+                            ctx,
+                            txs: all_processed_txs.clone(),
+                            error: e.to_string(),
+                        }
+                    })? {
+                    Ok(res) => {
+                        EXECUTION_METRICS.executed_transactions.inc();
+                        EXECUTION_METRICS.transaction_gas_used.observe(res.gas_used);
+                        EXECUTION_METRICS.transaction_native_used.observe(res.native_used);
+                        EXECUTION_METRICS.transaction_computation_native_used.observe(res.computational_native_used);
+                        EXECUTION_METRICS.transaction_pubdata_used.observe(res.pubdata_used);
+                        let status_str = if res.status  {"success"} else {"failure"};
+                        EXECUTION_METRICS.transaction_status[&status_str].inc();
                         tracing::debug!(
                             block_number=command.block_context.block_number,
-                            tx_hash=?tx.hash(),
-                            tx_index_in_block=executed_txs.len(),
-                            cumulative_gas_used_before=cumulative_gas_used,
-                            gas_limit=tx.inner.gas_limit(),
-                            signer=?tx.inner.signer(),
-                            "Executing transaction..."
+                            output=?res,
+                            "Transaction executed"
                         );
 
-                        all_processed_txs.push(tx.clone());
-                        match runner.execute_next_tx(tx.clone().encode())
-                            .await
-                            .map_err(|e| {
-                                BlockDump {
-                                    ctx,
-                                    txs: all_processed_txs.clone(),
-                                    error: e.to_string(),
-                                }
-                            })? {
-                            Ok(res) => {
-                                EXECUTION_METRICS.executed_transactions.inc();
-                                EXECUTION_METRICS.transaction_gas_used.observe(res.gas_used);
-                                EXECUTION_METRICS.transaction_native_used.observe(res.native_used);
-                                EXECUTION_METRICS.transaction_computation_native_used.observe(res.computational_native_used);
-                                EXECUTION_METRICS.transaction_pubdata_used.observe(res.pubdata_used);
-                                let status_str = if res.status  {"success"} else {"failure"};
-                                EXECUTION_METRICS.transaction_status[&status_str].inc();
-                                tracing::debug!(
-                                    block_number=command.block_context.block_number,
-                                    output=?res,
-                                    "Transaction executed"
-                                );
+                        if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner() {
+                            interop_roots_count += interop_roots_tx.interop_roots_count();
+                        }
 
-                                if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner() {
-                                    interop_roots_count += interop_roots_tx.interop_roots_count();
-                                }
+                        let tx_type = tx.tx_type();
+                        executed_txs.push(tx);
+                        cumulative_gas_used += res.gas_used;
 
-                                let tx_type = tx.tx_type();
-                                executed_txs.push(tx);
-                                cumulative_gas_used += res.gas_used;
-
-                                // arm the timer once, after the first successful tx
-                                if deadline.is_none() && let Some(dur) = deadline_dur {
-                                    deadline = Some(Box::pin(tokio::time::sleep(dur)));
+                        // arm the timer once, after the first successful tx
+                        if deadline.is_none() && let Some(dur) = deadline_dur {
+                            deadline = Some(Box::pin(tokio::time::sleep(dur)));
+                        }
+                        if tx_type == ZkTxType::Upgrade {
+                            match &command.seal_policy {
+                                SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true } => {
+                                    tracing::debug!(block_number = ctx.block_number, "sealing block as upgrade tx was executed");
+                                    break SealReason::UpgradeTx;
                                 }
-                                if tx_type == ZkTxType::Upgrade {
-                                    match &command.seal_policy {
-                                        SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true } => {
-                                            tracing::debug!(block_number = ctx.block_number, "sealing block as upgrade tx was executed");
-                                            break SealReason::UpgradeTx;
-                                        }
-                                        SealPolicy::UntilExhausted { allowed_to_finish_early: false } => {
-                                            // We trust that the execution stream will not break protocol invariants.
-                                            tracing::info!(block_number = ctx.block_number, "upgrade tx executed, but seal policy requires full exhaustion");
-                                        }
-                                    }
-                                }
-                                match command.seal_policy {
-                                    SealPolicy::Decide(_, limit) if executed_txs.len() >= limit => {
-                                    tracing::debug!(block_number = ctx.block_number,
-                                                   txs = executed_txs.len(),
-                                                   "tx limit reached → sealing");
-                                        break SealReason::TxCountLimit
-                                    },
-                                    _ => {}
-                                }
-                            }
-                            Err(e) => {
-                                match (tx.tx_type(), command.invalid_tx_policy) {
-                                    (ZkTxType::L1 | ZkTxType::Upgrade | ZkTxType::InteropRoots, _) => {
-                                        return Err(
-                                            BlockDump {
-                                                ctx,
-                                                txs: all_processed_txs.clone(),
-                                                error: format!("invalid {} tx: {e:?} ({})", tx.tx_type(), tx.hash()),
-                                            }
-                                        )
-                                    }
-                                    (ZkTxType::L2(_), InvalidTxPolicy::RejectAndContinue) => {
-                                        let rejection_method = rejection_method(&e);
-
-                                        // mark the tx as invalid regardless of the `rejection_method`.
-                                        command.tx_source.as_mut().mark_last_tx_as_invalid();
-                                        // add tx to `purged_txs` only if we are purging it.
-                                        match (rejection_method, command.seal_policy, executed_txs.is_empty()) {
-                                            (TxRejectionMethod::Purge, _, _) => {
-                                                purged_txs.push((*tx.hash(), e.clone()));
-                                                tracing::info!(tx_hash = %tx.hash(), block_number = ctx.block_number, ?e, "invalid tx → purged");
-                                            }
-                                            (TxRejectionMethod::Skip, _, _) => {
-                                                tracing::info!(tx_hash = %tx.hash(), block_number = ctx.block_number, ?e, "invalid tx → skipped");
-                                            },
-                                            // For Produce, don't seal if no transactions have been executed yet
-                                            (TxRejectionMethod::SealBlock(reason), SealPolicy::Decide(..), true) => {
-                                                    purged_txs.push((*tx.hash(), e.clone()));
-                                                    tracing::info!(
-                                                        tx_hash = %tx.hash(),
-                                                        block_number = ctx.block_number,
-                                                        ?e,
-                                                        ?reason,
-                                                        "block limit reached on first tx for Produce → rejecting tx instead of sealing",
-                                                    );
-                                            }
-                                            (TxRejectionMethod::SealBlock(reason), _, _) => {
-                                                tracing::debug!(tx_hash = %tx.hash(), block_number = ctx.block_number, ?e, ?reason, "sealing block by criterion");
-                                                    break reason;
-                                            }
-                                        }
-                                    }
-                                    (ZkTxType::L2(_), InvalidTxPolicy::Abort) => {
-                                            return Err(
-                                                BlockDump {
-                                                    ctx,
-                                                    txs: all_processed_txs.clone(),
-                                                    error: format!("invalid l2 tx: {e:?} ({})", tx.hash()),
-                                                }
-                                            )
-                                    }
+                                SealPolicy::UntilExhausted { allowed_to_finish_early: false } => {
+                                    // We trust that the execution stream will not break protocol invariants.
+                                    tracing::info!(block_number = ctx.block_number, "upgrade tx executed, but seal policy requires full exhaustion");
                                 }
                             }
                         }
+                        match command.seal_policy {
+                            SealPolicy::Decide(_, limit) if executed_txs.len() >= limit => {
+                                tracing::debug!(block_number = ctx.block_number,
+                                               txs = executed_txs.len(),
+                                               "tx limit reached → sealing");
+                                break SealReason::TxCountLimit
+                            },
+                            _ => {}
+                        }
                     }
-                    /* ----- got a transaction that cannot be included because of gas or interop roots amount --- */
-                    Some(tx) => {
-                        tracing::debug!(block_number = ctx.block_number, "sealing block as next tx cannot be included");
-                        break should_exclude_and_seal(&ctx, cumulative_gas_used, interop_roots_count, &tx).unwrap();
-                    }
-                    /* ----- tx stream was exhausted  --------------------------- */
-                    None => {
-                        tracing::debug!(
-                            block_number = ctx.block_number,
-                            txs = executed_txs.len(),
-                            "stream exhausted → sealing"
-                        );
-                        break SealReason::TxStreamExhausted;
+                    Err(e) => {
+                        match (tx.tx_type(), command.invalid_tx_policy) {
+                            (ZkTxType::L1 | ZkTxType::Upgrade | ZkTxType::InteropRoots, _) => {
+                                return Err(
+                                    BlockDump {
+                                        ctx,
+                                        txs: all_processed_txs.clone(),
+                                        error: format!("invalid {} tx: {e:?} ({})", tx.tx_type(), tx.hash()),
+                                    }
+                                )
+                            }
+                            (ZkTxType::L2(_), InvalidTxPolicy::RejectAndContinue) => {
+                                let rejection_method = rejection_method(&e);
+
+                                // mark the tx as invalid regardless of the `rejection_method`.
+                                command.tx_source.as_mut().mark_last_tx_as_invalid();
+                                // add tx to `purged_txs` only if we are purging it.
+                                match (rejection_method, command.seal_policy, executed_txs.is_empty()) {
+                                    (TxRejectionMethod::Purge, _, _) => {
+                                        purged_txs.push((*tx.hash(), e.clone()));
+                                        tracing::info!(tx_hash = %tx.hash(), block_number = ctx.block_number, ?e, "invalid tx → purged");
+                                    }
+                                    (TxRejectionMethod::Skip, _, _) => {
+                                        tracing::info!(tx_hash = %tx.hash(), block_number = ctx.block_number, ?e, "invalid tx → skipped");
+                                    },
+                                    // For Produce, don't seal if no transactions have been executed yet
+                                    (TxRejectionMethod::SealBlock(reason), SealPolicy::Decide(..), true) => {
+                                        purged_txs.push((*tx.hash(), e.clone()));
+                                        tracing::info!(
+                                            tx_hash = %tx.hash(),
+                                            block_number = ctx.block_number,
+                                            ?e,
+                                            ?reason,
+                                            "block limit reached on first tx for Produce → rejecting tx instead of sealing",
+                                        );
+                                    }
+                                    (TxRejectionMethod::SealBlock(reason), _, _) => {
+                                        tracing::debug!(tx_hash = %tx.hash(), block_number = ctx.block_number, ?e, ?reason, "sealing block by criterion");
+                                        break reason;
+                                    }
+                                }
+                            }
+                            (ZkTxType::L2(_), InvalidTxPolicy::Abort) => {
+                                return Err(
+                                    BlockDump {
+                                        ctx,
+                                        txs: all_processed_txs.clone(),
+                                        error: format!("invalid l2 tx: {e:?} ({})", tx.hash()),
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -88,7 +88,7 @@ impl Stream for BestTransactionsStream<'_> {
                     Poll::Ready(Some(tx)) => {
                         return Poll::Ready(Some(ZkTransaction::from(tx)));
                     }
-                    Poll::Pending => {}
+                    Poll::Pending => return Poll::Pending,
                     Poll::Ready(None) => todo!("channel closed"),
                 }
             }
@@ -153,6 +153,8 @@ impl BestTransactionsStream<'_> {
             self.txs_already_provided = true; // TODO: implicit expectation that this method is _guaranteed_ to be called before using the stream.
         }
 
+        // Return `None` if the stream is closed.
+        #[allow(clippy::question_mark)]
         if self.peeked_tx.is_none() {
             return None;
         }
