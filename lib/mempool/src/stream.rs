@@ -36,6 +36,8 @@ pub struct BestTransactionsStream<'a> {
 
 const INTEROP_ROOTS_PER_IMPORT: usize = 100;
 
+/// A helper struct which accumulates interop roots and construct a transaction envelope
+/// either on request or when the limit of roots amount is reached
 struct InteropRootsAccumulator(Vec<IndexedInteropRoot>);
 
 impl InteropRootsAccumulator {
@@ -43,6 +45,11 @@ impl InteropRootsAccumulator {
         Self(Vec::new())
     }
 
+    /// Adds a root to the accumulator
+    /// 
+    /// Returns:
+    /// - `Some(envelope)` if the limit of roots amount is reached and we can return the transaction
+    /// - `None` if the limit of roots amount is not reached yet
     pub fn add_root_and_try_take_tx(
         &mut self,
         root: IndexedInteropRoot,
@@ -56,6 +63,11 @@ impl InteropRootsAccumulator {
         }
     }
 
+    /// Takes the transaction envelope if available
+    /// 
+    /// Returns:
+    /// - `Some(envelope)` if there are roots accumulated
+    /// - `None` if there are no roots in accumulator
     pub fn take_tx(&mut self) -> Option<IndexedInteropRootsEnvelope> {
         if self.0.is_empty() {
             None
