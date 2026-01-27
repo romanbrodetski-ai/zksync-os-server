@@ -318,12 +318,9 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
         let mut interop_txs = Vec::new();
         for tx in &replay_record.transactions {
             match tx.envelope() {
-                ZkEnvelope::InteropRoots(interop_tx) => match cmd_type {
-                    BlockCommandType::Replay | BlockCommandType::Rebuild => {
-                        interop_txs.push(interop_tx.clone());
-                    }
-                    BlockCommandType::Produce => {}
-                },
+                ZkEnvelope::InteropRoots(interop_tx) => {
+                    interop_txs.push(interop_tx.clone());
+                }
                 ZkEnvelope::L1(l1_tx) => {
                     self.next_l1_priority_id = l1_tx.priority_id() + 1;
                     // consume processed L1 txs for non-produce commands

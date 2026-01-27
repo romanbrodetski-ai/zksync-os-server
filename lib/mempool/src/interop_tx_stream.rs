@@ -114,15 +114,14 @@ impl InteropTxStream {
             let mut roots = Vec::new();
             for _ in 0..tx.interop_roots_count() {
                 roots.push(self.take_next_root().await.unwrap());
-
-                let envelope = InteropRootsEnvelope::from_interop_roots(
-                    roots.iter().map(|r| r.root.clone()).collect(),
-                );
-
-                assert_eq!(&envelope, &tx);
-
-                log_index = Some(roots.last().unwrap().log_index.clone());
             }
+
+            let envelope = InteropRootsEnvelope::from_interop_roots(
+                roots.iter().map(|r| r.root.clone()).collect(),
+            );
+            log_index = Some(roots.last().unwrap().log_index.clone());
+
+            assert_eq!(&envelope, &tx);
         }
 
         assert!(self.pending_roots.is_empty());
