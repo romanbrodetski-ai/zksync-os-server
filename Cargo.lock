@@ -15365,13 +15365,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zksync_os_integration_tests_wrapper"
-version = "0.14.0-non-semver-compat"
-dependencies = [
- "zksync_os_integration_tests",
-]
-
-[[package]]
 name = "zksync_os_interface"
 version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
