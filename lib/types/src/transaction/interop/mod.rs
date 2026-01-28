@@ -31,7 +31,7 @@ pub struct InteropRootsEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct IndexedInteropRootsEnvelope {
-    pub log_index: InteropRootsLogIndex,
+    pub log_id: u64,
     pub envelope: InteropRootsEnvelope,
 }
 
@@ -86,35 +86,6 @@ mod tx_serde {
                 y_parity: false,
             }
         }
-    }
-}
-
-/// A helper struct to store the block number and index in block of published interop roots event.
-#[derive(Default, Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, PartialOrd)]
-pub struct InteropRootsLogIndex {
-    /// Block number from which event was published.
-    pub block_number: u64,
-    /// Index of the event in the block.
-    pub index_in_block: u64,
-}
-
-impl Encodable for InteropRootsLogIndex {
-    fn encode(&self, out: &mut dyn BufMut) {
-        self.block_number.encode(out);
-        self.index_in_block.encode(out);
-    }
-
-    fn length(&self) -> usize {
-        self.block_number.length() + self.index_in_block.length()
-    }
-}
-
-impl Decodable for InteropRootsLogIndex {
-    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
-        Ok(Self {
-            block_number: Decodable::decode(buf)?,
-            index_in_block: Decodable::decode(buf)?,
-        })
     }
 }
 

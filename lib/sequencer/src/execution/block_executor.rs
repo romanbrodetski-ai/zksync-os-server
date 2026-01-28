@@ -18,7 +18,7 @@ use zksync_os_observability::ComponentStateHandle;
 use zksync_os_storage_api::{
     MeteredViewState, OverriddenStateView, ReadStateHistory, ReplayRecord, WriteState,
 };
-use zksync_os_types::{InteropRootsLogIndex, ZkEnvelope, ZkTransaction, ZkTxType, ZksyncOsEncode};
+use zksync_os_types::{ZkEnvelope, ZkTransaction, ZkTxType, ZksyncOsEncode};
 // Note that this is a pure function without a container struct (e.g. `struct BlockExecutor`)
 // MAINTAIN this to ensure the function is completely stateless - explicit or implicit.
 
@@ -29,7 +29,7 @@ pub const INTEROP_ROOTS_PER_BLOCK: u64 = 1000;
 
 pub struct BlockOutputExt {
     inner: BlockOutput,
-    pub last_interop_log_index: Option<InteropRootsLogIndex>,
+    pub last_interop_root_id: Option<u64>,
 }
 
 impl Deref for BlockOutputExt {
@@ -87,7 +87,7 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
     };
     let mut deadline: Option<Pin<Box<Sleep>>> = None; // will arm after 1st tx success
     let mut interop_roots_count = 0;
-    let mut last_interop_log_index = None;
+    let mut last_interop_root_id = None;
 
     /* ---------- main loop ------------------------------------------ */
     // seal_reason must only be used for observability - handling must remain generic
@@ -163,8 +163,8 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
 
                         if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner() {
                             interop_roots_count += interop_roots_tx.interop_roots_count();
-                            last_interop_log_index = metadata.map(|m| match m {
-                                ZkTransactionMetadata::Interop(log_index) => log_index,
+                            last_interop_root_id = metadata.map(|m| match m {
+                                ZkTransactionMetadata::Interop(root_id) => root_id,
                             });
                         }
 
@@ -362,7 +362,7 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
     Ok((
         BlockOutputExt {
             inner: output,
-            last_interop_log_index,
+            last_interop_root_id,
         },
         ReplayRecord::new(
             ctx,
@@ -373,7 +373,7 @@ pub async fn execute_block<R: ReadStateHistory + WriteState>(
             command.protocol_version,
             block_hash_output,
             command.force_preimages,
-            command.starting_interop_event_index,
+            command.starting_interop_root_id,
         ),
         purged_txs,
     ))

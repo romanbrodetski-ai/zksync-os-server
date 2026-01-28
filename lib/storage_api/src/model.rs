@@ -3,8 +3,7 @@ use alloy::rlp::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 use zksync_os_interface::types::BlockContext;
 use zksync_os_types::{
-    InteropRootsLogIndex, L1TxSerialId, ProtocolSemanticVersion, ZkEnvelope, ZkReceiptEnvelope,
-    ZkTransaction,
+    L1TxSerialId, ProtocolSemanticVersion, ZkEnvelope, ZkReceiptEnvelope, ZkTransaction,
 };
 
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
@@ -47,9 +46,7 @@ pub struct ReplayRecord {
     pub block_output_hash: B256,
     /// Forced preimages to be included before the block execution.
     pub force_preimages: Vec<(B256, Vec<u8>)>,
-    /// Event index(block number and index in block) of the interop root tx executed first in the block
-    /// If there is no interop root tx in the block, equals to the previous block's value
-    pub starting_interop_event_index: InteropRootsLogIndex,
+    pub starting_interop_root_id: u64,
 }
 
 impl ReplayRecord {
@@ -63,7 +60,7 @@ impl ReplayRecord {
         protocol_version: ProtocolSemanticVersion,
         block_output_hash: B256,
         force_preimages: Vec<(B256, Vec<u8>)>,
-        starting_interop_event_index: InteropRootsLogIndex,
+        starting_interop_root_id: u64,
     ) -> Self {
         let first_l1_tx_priority_id = transactions.iter().find_map(|tx| match tx.envelope() {
             ZkEnvelope::InteropRoots(_) => None,
@@ -87,7 +84,7 @@ impl ReplayRecord {
             protocol_version,
             block_output_hash,
             force_preimages,
-            starting_interop_event_index,
+            starting_interop_root_id,
         }
     }
 }

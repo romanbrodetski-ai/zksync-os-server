@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
 use zksync_os_types::{
-    IndexedInteropRootsEnvelope, InteropRootsLogIndex, L1PriorityEnvelope, L1UpgradeEnvelope,
-    L2Envelope, L2Transaction, UpgradeTransaction, ZkTransaction,
+    IndexedInteropRootsEnvelope, L1PriorityEnvelope, L1UpgradeEnvelope, L2Envelope, L2Transaction,
+    UpgradeTransaction, ZkTransaction,
 };
 
 pub trait TxStream: Stream {
@@ -41,7 +41,8 @@ pub struct ZkPoolTransaction {
 
 #[derive(Debug, Clone)]
 pub enum ZkTransactionMetadata {
-    Interop(InteropRootsLogIndex),
+    // log id of interop root
+    Interop(u64),
 }
 
 impl ZkPoolTransaction {
@@ -88,7 +89,7 @@ impl From<IndexedInteropRootsEnvelope> for ZkPoolTransaction {
     fn from(value: IndexedInteropRootsEnvelope) -> Self {
         ZkPoolTransaction {
             inner: value.envelope.into(),
-            metadata: Some(ZkTransactionMetadata::Interop(value.log_index)),
+            metadata: Some(ZkTransactionMetadata::Interop(value.log_id)),
         }
     }
 }

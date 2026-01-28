@@ -15,16 +15,18 @@ mod v4;
 mod v5;
 #[rustfmt::skip]
 mod v6;
+#[rustfmt::skip]
+mod v7;
 
 #[cfg(test)]
 mod tests;
 
-pub const REPLAY_WIRE_FORMAT_VERSION: u32 = 6;
+pub const REPLAY_WIRE_FORMAT_VERSION: u32 = 7;
 
 impl ReplayRecord {
     /// Encodes the replay using the current wire format version
     pub fn encode_with_current_version(self) -> Vec<u8> {
-        let wire_format = v6::ReplayWireFormatV6::from(self);
+        let wire_format = v7::ReplayWireFormatV7::from(self);
         bincode::encode_to_vec(wire_format, bincode::config::standard()).unwrap()
     }
 
@@ -69,6 +71,13 @@ impl ReplayRecord {
             }
             6 => {
                 let wire_format: v6::ReplayWireFormatV6 =
+                    bincode::decode_from_slice(bytes, bincode::config::standard())
+                        .unwrap()
+                        .0;
+                wire_format.into()
+            }
+            7 => {
+                let wire_format: v7::ReplayWireFormatV7 =
                     bincode::decode_from_slice(bytes, bincode::config::standard())
                         .unwrap()
                         .0;

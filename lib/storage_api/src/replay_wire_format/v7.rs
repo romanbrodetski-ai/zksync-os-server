@@ -7,15 +7,14 @@ use bincode::{Decode, Encode};
 
 // It is somewhat safe to assume that these will not change
 use alloy::primitives::{Address, B256, U256};
-use serde::{Deserialize, Serialize};
-use zksync_os_types::{ProtocolSemanticVersion};
+use zksync_os_types::ProtocolSemanticVersion;
 
 // Differences from v5:
 // - added `starting_interop_event_index` to `ReplayWireFormatV6`
 
 /// The format ReplayRecords are currently sent in
 #[derive(Encode, Decode)]
-pub struct ReplayWireFormatV6 {
+pub struct ReplayWireFormatV7 {
     pub block_context: BlockContext,
     pub starting_l1_priority_id: u64,
     pub transactions: Vec<ZkTransactionWireFormat>,
@@ -28,8 +27,7 @@ pub struct ReplayWireFormatV6 {
     pub protocol_version: ProtocolSemanticVersion,
     #[bincode(with_serde)]
     pub force_preimages: Vec<(B256, Vec<u8>)>,
-    #[bincode(with_serde)]
-    pub starting_interop_event_index: InteropRootsLogIndex,
+    pub starting_interop_root_id: u64,
 }
 
 #[derive(Encode, Decode)]
@@ -84,12 +82,3 @@ impl<'de> serde::Deserialize<'de> for BlockHashes {
 /// Converting to a deep copy of the alloy types is way too much work to be worth it.
 #[derive(Encode, Decode)]
 pub struct ZkTransactionWireFormat(pub Vec<u8>);
-
-/// A helper struct to store the block number and index in block of published interop roots event.
-#[derive(Default, Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, PartialOrd)]
-pub struct InteropRootsLogIndex {
-    /// Block number from which event was published.
-    pub block_number: u64,
-    /// Index of the event in the block.
-    pub index_in_block: u64,
-}

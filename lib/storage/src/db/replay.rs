@@ -10,7 +10,7 @@ use zksync_os_metadata::NODE_SEMVER_VERSION;
 use zksync_os_rocksdb::RocksDB;
 use zksync_os_rocksdb::db::{NamedColumnFamily, WriteBatch};
 use zksync_os_storage_api::{ReadReplay, ReplayRecord, WriteReplay};
-use zksync_os_types::{InteropRootsLogIndex, ProtocolSemanticVersion};
+use zksync_os_types::ProtocolSemanticVersion;
 
 /// A write-ahead log storing [`ReplayRecord`]s.
 ///
@@ -43,7 +43,7 @@ pub enum BlockReplayColumnFamily {
     ProtocolVersion,
     ForcePreimages,
     BlockOutputHash,
-    StartingInteropEventIndex,
+    StartingInteropRootId,
     /// Stores the latest appended block number under a fixed key.
     Latest,
 }
@@ -58,7 +58,7 @@ impl NamedColumnFamily for BlockReplayColumnFamily {
         BlockReplayColumnFamily::ProtocolVersion,
         BlockReplayColumnFamily::BlockOutputHash,
         BlockReplayColumnFamily::ForcePreimages,
-        BlockReplayColumnFamily::StartingInteropEventIndex,
+        BlockReplayColumnFamily::StartingInteropRootId,
         BlockReplayColumnFamily::Latest,
     ];
 
@@ -71,7 +71,7 @@ impl NamedColumnFamily for BlockReplayColumnFamily {
             BlockReplayColumnFamily::ProtocolVersion => "protocol_version",
             BlockReplayColumnFamily::BlockOutputHash => "block_output_hash",
             BlockReplayColumnFamily::ForcePreimages => "force_preimages",
-            BlockReplayColumnFamily::StartingInteropEventIndex => "starting_interop_event_index",
+            BlockReplayColumnFamily::StartingInteropRootId => "starting_interop_root_id",
             BlockReplayColumnFamily::Latest => "latest",
         }
     }
@@ -103,7 +103,7 @@ impl BlockReplayStorage {
                     protocol_version: genesis_tx.protocol_version,
                     block_output_hash: B256::ZERO,
                     force_preimages: genesis_tx.force_deploy_preimages,
-                    starting_interop_event_index: InteropRootsLogIndex::default(),
+                    starting_interop_root_id: 0,
                 },
                 None,
             )
@@ -170,15 +170,15 @@ impl BlockReplayStorage {
             &force_preimages_value,
         );
 
-        let starting_interop_event_index_value = bincode::serde::encode_to_vec(
-            &record.starting_interop_event_index,
+        let starting_interop_root_id_value = bincode::serde::encode_to_vec(
+            &record.starting_interop_root_id,
             bincode::config::standard(),
         )
-        .expect("Failed to serialize record.starting_interop_event_index");
+        .expect("Failed to serialize record.starting_interop_root_id");
         batch.put_cf(
-            BlockReplayColumnFamily::StartingInteropEventIndex,
+            BlockReplayColumnFamily::StartingInteropRootId,
             &db_key,
-            &starting_interop_event_index_value,
+            &starting_interop_root_id_value,
         );
 
         self.db
@@ -309,20 +309,20 @@ impl ReadReplay for BlockReplayStorage {
             .expect("Failed to read from BlockOutputHash CF")
             .expect("BlockOutputHash must be written atomically with Context");
 
-        let starting_interop_event_index = if let Some(starting_interop_event_index) = self
+        let starting_interop_root_id = if let Some(starting_interop_root_id) = self
             .db
-            .get_cf(BlockReplayColumnFamily::StartingInteropEventIndex, &key)
-            .expect("Failed to read from StartingInteropEventIndex CF")
+            .get_cf(BlockReplayColumnFamily::StartingInteropRootId, &key)
+            .expect("Failed to read from StartingInteropRootId CF")
         {
-            let stored: InteropRootsLogIndex = bincode::serde::decode_from_slice(
-                &starting_interop_event_index,
+            let stored: u64 = bincode::serde::decode_from_slice(
+                &starting_interop_root_id,
                 bincode::config::standard(),
             )
-            .expect("Failed to deserialize starting interop event index")
+            .expect("Failed to deserialize starting interop root id")
             .0;
             stored
         } else {
-            InteropRootsLogIndex::default()
+            0
         };
 
         Some(ReplayRecord {
@@ -349,7 +349,7 @@ impl ReadReplay for BlockReplayStorage {
             protocol_version,
             block_output_hash: B256::from_slice(&block_output_hash),
             force_preimages,
-            starting_interop_event_index,
+            starting_interop_root_id,
         })
     }
 
