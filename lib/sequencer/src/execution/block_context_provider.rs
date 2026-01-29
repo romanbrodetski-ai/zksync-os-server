@@ -333,12 +333,7 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
                             index_in_block: indexed_interop_tx.log_index.index_in_block + 1,
                         };
                     }
-                    BlockCommandType::Produce => {
-                        if let Some(block_time) = block_time {
-                            self.next_interop_block_allowed_after =
-                                Instant::now().checked_add(3 * block_time).unwrap();
-                        }
-                    }
+                    BlockCommandType::Produce => {}
                 },
                 ZkEnvelope::L1(l1_tx) => {
                     self.next_l1_priority_id = l1_tx.priority_id() + 1;
@@ -369,6 +364,11 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
                     }
                 }
             }
+        }
+
+        if let Some(block_time) = block_time && replay_record.transactions.first().map(|tx| tx.envelope()) == Some(ZkEnvelope::InteropRoots(_)) {
+            // we want average ratio of interop blocks to be 1:3
+            self.next_interop_block_allowed_after = Instant::now() + 3 * block_time;
         }
 
         // NOTE: `block_output.last_interop_log_index` is empty for replay blocks, instead
