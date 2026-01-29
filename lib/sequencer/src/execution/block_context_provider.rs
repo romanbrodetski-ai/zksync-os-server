@@ -367,8 +367,14 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
         }
 
         if let Some(block_time) = block_time
-            && replay_record.transactions.first().map(|tx| tx.envelope())
-                == Some(ZkEnvelope::InteropRoots(_))
+            && matches!(
+                replay_record
+                    .transactions
+                    .first()
+                    .expect("Replay record must have at least one transaction")
+                    .envelope(),
+                ZkEnvelope::InteropRoots(_)
+            )
         {
             // we want average ratio of interop blocks to be 1:3
             self.next_interop_block_allowed_after = Instant::now() + 3 * block_time;
