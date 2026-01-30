@@ -551,7 +551,8 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         l1_upgrade_transactions_receiver,
         InteropTxStream::new(
             interop_roots_receiver,
-            config.sequencer_config.interop_roots_per_tx,
+            // todo: use config value once contracts can handle multiple roots in one call
+            1,
         ),
         l2_mempool.clone(),
         block_hashes_for_next_block,
