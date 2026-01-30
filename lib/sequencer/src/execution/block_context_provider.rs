@@ -109,7 +109,7 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
                 let mut best_txs = best_transactions(
                     &self.l2_mempool,
                     &mut self.l1_transactions,
-                    self.interop_tx_pool.delayed_transaction_stream(
+                    self.interop_tx_pool.interop_transactions_with_delay(
                         self.interop_roots_per_tx,
                         self.next_interop_tx_allowed_after,
                     ),
@@ -366,10 +366,8 @@ impl<Mempool: L2TransactionPool> BlockContextProvider<Mempool> {
             }
         }
 
-        if let Some(last_interop_log_index) = self
-            .interop_tx_pool
-            .on_canonical_state_change(interop_txs)
-            .await
+        if let Some(last_interop_log_index) =
+            self.interop_tx_pool.on_canonical_state_change(interop_txs)
         {
             if let Some(block_time) = block_time {
                 self.next_interop_tx_allowed_after = Instant::now() + block_time * 3;

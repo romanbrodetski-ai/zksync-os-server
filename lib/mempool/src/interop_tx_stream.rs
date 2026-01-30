@@ -1,17 +1,16 @@
 use std::{
     collections::VecDeque,
-    pin::Pin,
     sync::{Arc, RwLock},
-    task::{Context, Poll},
 };
 
-use futures::Stream;
+//use tokio::sync::;
 use std::time::Instant;
 use tokio::sync::broadcast::{self, error::TryRecvError};
 use zksync_os_types::{
     IndexedInteropRoot, IndexedInteropRootsEnvelope, InteropRootsEnvelope, InteropRootsLogIndex,
 };
 
+#[derive(Clone)]
 pub struct InteropTxPool {
     inner: Arc<RwLock<InteropTxPoolInner>>,
 }
@@ -24,91 +23,75 @@ impl InteropTxPool {
     }
 }
 
-impl Clone for InteropTxPool {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
 impl InteropTxPool {
-    pub fn delayed_transaction_stream(
+    pub fn interop_transactions_with_delay(
         &self,
         interop_roots_per_tx: usize,
         next_tx_allowed_after: Instant,
-    ) -> InteropTxStream {
+    ) -> InteropTransactions {
         self.inner
-            .write()
-            .expect("Failed to read from interop tx pool")
-            .delayed_transaction_stream(interop_roots_per_tx, next_tx_allowed_after)
+            .read()
+            .unwrap()
+            .interop_transactions_with_delay(interop_roots_per_tx, next_tx_allowed_after)
     }
 
-    pub fn add_root(&self, root: IndexedInteropRoot) {
-        self.inner
-            .write()
-            .expect("Failed to write to interop tx pool")
-            .add_root(root);
+    pub fn add_root(&mut self, root: IndexedInteropRoot) {
+        self.inner.write().unwrap().add_root(root);
     }
 
-    pub async fn on_canonical_state_change(
-        &self,
+    pub fn on_canonical_state_change(
+        &mut self,
         txs: Vec<InteropRootsEnvelope>,
     ) -> Option<InteropRootsLogIndex> {
-        self.inner
-            .write()
-            .expect("Failed to write to interop tx pool")
-            .on_canonical_state_change(txs)
-            .await
+        self.inner.write().unwrap().on_canonical_state_change(txs)
     }
 }
 
+#[derive(Clone)]
 struct InteropTxPoolInner {
     sender: broadcast::Sender<IndexedInteropRoot>,
     pending_roots: VecDeque<IndexedInteropRoot>,
     sent_roots: VecDeque<IndexedInteropRoot>,
 }
 
-pub struct InteropTxStream {
+pub struct InteropTransactions {
     receiver: broadcast::Receiver<IndexedInteropRoot>,
     pending_roots: VecDeque<IndexedInteropRoot>,
     interop_roots_per_tx: usize,
     next_tx_allowed_after: Instant,
 }
 
-impl Stream for InteropTxStream {
+impl Iterator for InteropTransactions {
     type Item = IndexedInteropRootsEnvelope;
 
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-
-        if Instant::now() < this.next_tx_allowed_after {
-            return Poll::Pending;
+    fn next(&mut self) -> Option<Self::Item> {
+        if Instant::now() < self.next_tx_allowed_after {
+            return None;
         }
 
         loop {
-            match this.receiver.try_recv() {
+            match self.receiver.try_recv() {
                 Ok(root) => {
-                    if let Some(envelope) = this.add_root_and_try_take_tx(root) {
-                        return Poll::Ready(Some(envelope));
+                    if let Some(envelope) = self.add_root_and_try_take_tx(root) {
+                        return Some(envelope);
                     }
                     continue;
                 }
                 Err(TryRecvError::Empty) | Err(TryRecvError::Lagged(_)) => {
-                    if let Some(envelope) = this.take_tx() {
-                        return Poll::Ready(Some(envelope));
+                    if let Some(envelope) = self.take_tx() {
+                        return Some(envelope);
                     }
-                    return Poll::Pending;
+                    return None;
                 }
                 Err(TryRecvError::Closed) => {
-                    return Poll::Ready(None);
+                    return None;
                 }
             }
         }
     }
 }
 
-impl InteropTxStream {
+impl InteropTransactions {
     /// Add a new root to pending roots and return transaction if the limit of interop roots per import is reached
     fn add_root_and_try_take_tx(
         &mut self,
@@ -155,14 +138,12 @@ impl InteropTxPoolInner {
         }
     }
 
-    pub fn delayed_transaction_stream(
-        &mut self,
+    pub fn interop_transactions_with_delay(
+        &self,
         interop_roots_per_tx: usize,
         next_tx_allowed_after: Instant,
-    ) -> InteropTxStream {
-        self.is_stream_active = true;
-
-        InteropTxStream {
+    ) -> InteropTransactions {
+        InteropTransactions {
             receiver: self.sender.subscribe(),
             pending_roots: self.pending_roots.clone(),
             interop_roots_per_tx,
@@ -171,9 +152,8 @@ impl InteropTxPoolInner {
     }
 
     pub fn add_root(&mut self, root: IndexedInteropRoot) {
-        self.sender.send(root.clone()).expect("Failed to send root");
-
         if self.sender.receiver_count() > 0 {
+            self.sender.send(root.clone()).expect("Failed to send root");
             self.sent_roots.push_front(root);
         } else {
             self.pending_roots.push_front(root);
@@ -184,7 +164,7 @@ impl InteropTxPoolInner {
     /// - used roots
     /// - pending roots
     /// - receiver
-    async fn take_next_root(&mut self) -> Option<IndexedInteropRoot> {
+    fn take_next_root(&mut self) -> Option<IndexedInteropRoot> {
         if let Some(root) = self.sent_roots.pop_back() {
             Some(root)
         } else {
@@ -194,7 +174,7 @@ impl InteropTxPoolInner {
 
     /// Cleans up the stream and removes all roots that were sent in transactions
     /// Returns the last log index of executed interop root
-    pub async fn on_canonical_state_change(
+    pub fn on_canonical_state_change(
         &mut self,
         txs: Vec<InteropRootsEnvelope>,
     ) -> Option<InteropRootsLogIndex> {
@@ -207,7 +187,7 @@ impl InteropTxPoolInner {
         for tx in txs {
             let mut roots = Vec::new();
             for _ in 0..tx.interop_roots_count() {
-                roots.push(self.take_next_root().await.unwrap());
+                roots.push(self.take_next_root().unwrap());
             }
 
             let envelope = InteropRootsEnvelope::from_interop_roots(
