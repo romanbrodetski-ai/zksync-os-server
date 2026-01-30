@@ -71,7 +71,7 @@ use zksync_os_l1_watcher::{
     CommittedBatchProvider, L1CommitWatcher, L1ExecuteWatcher, L1TxWatcher, L1UpgradeTxWatcher,
 };
 use zksync_os_l1_watcher::{InteropWatcher, L1PersistBatchWatcher};
-use zksync_os_mempool::{InteropTxStream, L2TransactionPool};
+use zksync_os_mempool::{InteropTxPoolInner, L2TransactionPool};
 use zksync_os_merkle_tree::{MerkleTree, MerkleTreeVersion, RocksDBWrapper};
 use zksync_os_metadata::NODE_VERSION;
 use zksync_os_network::service::NetworkService;
@@ -549,7 +549,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         next_interop_event_index,
         l1_transactions_for_sequencer,
         l1_upgrade_transactions_receiver,
-        InteropTxStream::new(
+        InteropTxPoolInner::new(
             interop_roots_receiver,
             // todo: use config value once contracts can handle multiple roots in one call
             1,

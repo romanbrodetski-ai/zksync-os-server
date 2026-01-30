@@ -1,52 +1,106 @@
 use std::{
     collections::VecDeque,
     pin::Pin,
+    sync::{Arc, RwLock},
     task::{Context, Poll},
-    time::Duration,
 };
 
 use futures::Stream;
-use tokio::{sync::mpsc, time::Instant};
+use std::time::Instant;
+use tokio::sync::broadcast::{self, error::TryRecvError};
 use zksync_os_types::{
     IndexedInteropRoot, IndexedInteropRootsEnvelope, InteropRootsEnvelope, InteropRootsLogIndex,
 };
 
-/// Stream that accumulates interop roots and produces interop transactions
-/// It also keeps track of sent roots to be able to return them back to stream
-/// in case tx was excluded from the block
-pub struct InteropTxStream {
-    receiver: mpsc::Receiver<IndexedInteropRoot>,
+pub struct InteropTxPool {
+    inner: Arc<RwLock<InteropTxPoolInner>>,
+}
+
+impl InteropTxPool {
+    pub fn new(buffer_size: usize) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(InteropTxPoolInner::new(buffer_size))),
+        }
+    }
+}
+
+impl Clone for InteropTxPool {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl InteropTxPool {
+    pub fn delayed_transaction_stream(
+        &self,
+        interop_roots_per_tx: usize,
+        next_tx_allowed_after: Instant,
+    ) -> InteropTxStream {
+        self.inner
+            .write()
+            .expect("Failed to read from interop tx pool")
+            .delayed_transaction_stream(interop_roots_per_tx, next_tx_allowed_after)
+    }
+
+    pub fn add_root(&self, root: IndexedInteropRoot) {
+        self.inner
+            .write()
+            .expect("Failed to write to interop tx pool")
+            .add_root(root);
+    }
+
+    pub async fn on_canonical_state_change(
+        &self,
+        txs: Vec<InteropRootsEnvelope>,
+    ) -> Option<InteropRootsLogIndex> {
+        self.inner
+            .write()
+            .expect("Failed to write to interop tx pool")
+            .on_canonical_state_change(txs)
+            .await
+    }
+}
+
+struct InteropTxPoolInner {
+    sender: broadcast::Sender<IndexedInteropRoot>,
     pending_roots: VecDeque<IndexedInteropRoot>,
-    used_roots: VecDeque<IndexedInteropRoot>,
+    sent_roots: VecDeque<IndexedInteropRoot>,
+}
+
+pub struct InteropTxStream {
+    receiver: broadcast::Receiver<IndexedInteropRoot>,
+    pending_roots: VecDeque<IndexedInteropRoot>,
     interop_roots_per_tx: usize,
-    next_interop_tx_allowed_after: Instant,
+    next_tx_allowed_after: Instant,
 }
 
 impl Stream for InteropTxStream {
     type Item = IndexedInteropRootsEnvelope;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        if Instant::now() < this.next_interop_tx_allowed_after {
+        if Instant::now() < this.next_tx_allowed_after {
             return Poll::Pending;
         }
 
         loop {
-            match this.receiver.poll_recv(cx) {
-                Poll::Ready(Some(root)) => {
+            match this.receiver.try_recv() {
+                Ok(root) => {
                     if let Some(envelope) = this.add_root_and_try_take_tx(root) {
                         return Poll::Ready(Some(envelope));
                     }
                     continue;
                 }
-                Poll::Pending => {
+                Err(TryRecvError::Empty) | Err(TryRecvError::Lagged(_)) => {
                     if let Some(envelope) = this.take_tx() {
                         return Poll::Ready(Some(envelope));
                     }
                     return Poll::Pending;
                 }
-                Poll::Ready(None) => {
+                Err(TryRecvError::Closed) => {
                     return Poll::Ready(None);
                 }
             }
@@ -55,16 +109,6 @@ impl Stream for InteropTxStream {
 }
 
 impl InteropTxStream {
-    pub fn new(receiver: mpsc::Receiver<IndexedInteropRoot>, interop_roots_per_tx: usize) -> Self {
-        Self {
-            receiver,
-            pending_roots: VecDeque::new(),
-            used_roots: VecDeque::new(),
-            interop_roots_per_tx,
-            next_interop_tx_allowed_after: Instant::now(),
-        }
-    }
-
     /// Add a new root to pending roots and return transaction if the limit of interop roots per import is reached
     fn add_root_and_try_take_tx(
         &mut self,
@@ -97,9 +141,42 @@ impl InteropTxStream {
                 ),
             };
 
-            self.used_roots.extend(roots_to_consume);
-
             Some(tx)
+        }
+    }
+}
+
+impl InteropTxPoolInner {
+    pub fn new(buffer_size: usize) -> Self {
+        Self {
+            sender: broadcast::Sender::new(buffer_size),
+            pending_roots: VecDeque::new(),
+            sent_roots: VecDeque::new(),
+        }
+    }
+
+    pub fn delayed_transaction_stream(
+        &mut self,
+        interop_roots_per_tx: usize,
+        next_tx_allowed_after: Instant,
+    ) -> InteropTxStream {
+        self.is_stream_active = true;
+
+        InteropTxStream {
+            receiver: self.sender.subscribe(),
+            pending_roots: self.pending_roots.clone(),
+            interop_roots_per_tx,
+            next_tx_allowed_after,
+        }
+    }
+
+    pub fn add_root(&mut self, root: IndexedInteropRoot) {
+        self.sender.send(root.clone()).expect("Failed to send root");
+
+        if self.sender.receiver_count() > 0 {
+            self.sent_roots.push_front(root);
+        } else {
+            self.pending_roots.push_front(root);
         }
     }
 
@@ -108,12 +185,10 @@ impl InteropTxStream {
     /// - pending roots
     /// - receiver
     async fn take_next_root(&mut self) -> Option<IndexedInteropRoot> {
-        if let Some(root) = self.used_roots.pop_front() {
-            Some(root)
-        } else if let Some(root) = self.pending_roots.pop_front() {
+        if let Some(root) = self.sent_roots.pop_back() {
             Some(root)
         } else {
-            self.receiver.recv().await
+            self.pending_roots.pop_back()
         }
     }
 
@@ -122,7 +197,6 @@ impl InteropTxStream {
     pub async fn on_canonical_state_change(
         &mut self,
         txs: Vec<InteropRootsEnvelope>,
-        block_time: Option<Duration>,
     ) -> Option<InteropRootsLogIndex> {
         if txs.is_empty() {
             return None;
@@ -144,17 +218,7 @@ impl InteropTxStream {
             assert_eq!(&envelope, &tx);
         }
 
-        assert!(
-            self.pending_roots.is_empty(),
-            "Pending roots are expected to be empty when on_canonical_state_change is called"
-        );
-
-        // Clear used roots that were left in the buffer and move them to pending.
-        std::mem::swap(&mut self.pending_roots, &mut self.used_roots);
-
-        if let Some(block_time) = block_time {
-            self.next_interop_tx_allowed_after = Instant::now() + 3 * block_time;
-        }
+        self.pending_roots.extend(self.sent_roots.drain(..));
 
         Some(log_index)
     }

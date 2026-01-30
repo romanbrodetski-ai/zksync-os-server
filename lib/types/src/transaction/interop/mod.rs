@@ -36,7 +36,7 @@ pub struct IndexedInteropRootsEnvelope {
     pub envelope: InteropRootsEnvelope,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IndexedInteropRoot {
     pub log_index: InteropRootsLogIndex,
     pub root: InteropRoot,
