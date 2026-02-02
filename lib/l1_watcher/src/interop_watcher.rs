@@ -4,9 +4,9 @@ use alloy::primitives::BlockNumber;
 use alloy::providers::Provider;
 use alloy::rpc::types::Log;
 use alloy::{primitives::Address, providers::DynProvider};
-use tokio::sync::mpsc;
 use zksync_os_contract_interface::IMessageRoot::NewInteropRoot;
 use zksync_os_contract_interface::{Bridgehub, InteropRoot, MessageRoot};
+use zksync_os_mempool::InteropTxPool;
 use zksync_os_types::IndexedInteropRoot;
 
 use crate::watcher::{L1Watcher, L1WatcherError};
@@ -14,16 +14,16 @@ use crate::{L1WatcherConfig, ProcessL1Event};
 
 pub struct InteropWatcher {
     contract_address: Address,
-    output: mpsc::Sender<IndexedInteropRoot>,
     starting_interop_root_id: u64,
+    tx_pool: InteropTxPool,
 }
 
 impl InteropWatcher {
     pub async fn create_watcher(
         bridgehub: Bridgehub<DynProvider>,
         config: L1WatcherConfig,
-        output: mpsc::Sender<IndexedInteropRoot>,
         starting_interop_root_id: u64,
+        tx_pool: InteropTxPool,
     ) -> anyhow::Result<L1Watcher> {
         let contract_address = bridgehub.message_root_address().await?;
 
@@ -35,8 +35,8 @@ impl InteropWatcher {
 
         let this = Self {
             contract_address,
-            output,
             starting_interop_root_id,
+            tx_pool,
         };
 
         let next_l1_block =
@@ -136,13 +136,10 @@ impl ProcessL1Event for InteropWatcher {
             sides: tx.sides.clone(),
         };
 
-        self.output
-            .send(IndexedInteropRoot {
-                log_id: tx.logId.try_into().unwrap(),
-                root: interop_root,
-            })
-            .await
-            .map_err(|_| L1WatcherError::OutputClosed)?;
+        self.tx_pool.add_root(IndexedInteropRoot {
+            log_id: tx.logId.try_into().unwrap(),
+            root: interop_root,
+        });
 
         Ok(())
     }

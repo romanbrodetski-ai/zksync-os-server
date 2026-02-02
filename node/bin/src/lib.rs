@@ -17,6 +17,8 @@ mod state_initializer;
 pub mod tree_manager;
 pub mod zkstack_config;
 
+use zksync_os_mempool::InteropTxPool;
+
 use crate::batch_sink::{BatchSink, NoOpSink, clear_failing_block_config_task};
 use crate::batcher::{Batcher, BatcherStartupConfig, util::load_genesis_stored_batch_info};
 use crate::command_source::{ExternalNodeCommandSource, MainNodeCommandSource};
@@ -67,11 +69,11 @@ use zksync_os_l1_sender::commands::commit::CommitCommand;
 use zksync_os_l1_sender::commands::prove::ProofCommand;
 use zksync_os_l1_sender::pipeline_component::L1Sender;
 use zksync_os_l1_sender::upgrade_gatekeeper::UpgradeGatekeeper;
-use zksync_os_l1_watcher::InteropWatcher;
 use zksync_os_l1_watcher::{
     CommittedBatchProvider, L1CommitWatcher, L1ExecuteWatcher, L1TxWatcher, L1UpgradeTxWatcher,
 };
-use zksync_os_mempool::{InteropTxStream, L2TransactionPool};
+use zksync_os_l1_watcher::{InteropWatcher, L1PersistBatchWatcher};
+use zksync_os_mempool::L2TransactionPool;
 use zksync_os_merkle_tree::{MerkleTree, MerkleTreeVersion, RocksDBWrapper};
 use zksync_os_metadata::NODE_VERSION;
 use zksync_os_network::service::NetworkService;
@@ -85,7 +87,7 @@ use zksync_os_rpc_api::eth::EthApiClient;
 use zksync_os_sequencer::execution::block_context_provider::BlockContextProvider;
 use zksync_os_sequencer::execution::{FeeParams, FeeProvider, Sequencer};
 use zksync_os_status_server::run_status_server;
-use zksync_os_storage::db::BlockReplayStorage;
+use zksync_os_storage::db::{BlockReplayStorage, ExecutedBatchStorage};
 use zksync_os_storage::in_memory::Finality;
 use zksync_os_storage::lazy::RepositoryManager;
 use zksync_os_storage_api::{
@@ -100,6 +102,7 @@ const BLOCK_REPLAY_WAL_DB_NAME: &str = "block_replay_wal";
 const STATE_TREE_DB_NAME: &str = "tree";
 const PRIORITY_TREE_DB_NAME: &str = "priority_txs_tree";
 const REPOSITORY_DB_NAME: &str = "repository";
+const BATCH_DB_NAME: &str = "batch";
 pub const INTERNAL_CONFIG_FILE_NAME: &str = "internal_config.json";
 
 #[allow(clippy::too_many_arguments)]
@@ -175,20 +178,9 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     // Channel between L1TxWatcher and Sequencer
     let (l1_transactions_sender, l1_transactions_for_sequencer) = tokio::sync::mpsc::channel(5);
 
-    // Channel between InteropWatcher and Sequencer
-    let (interop_roots_sender, interop_roots_receiver) = tokio::sync::mpsc::channel(5);
-
     // Channel between L1UpgradeWatcher and Sequencer
     let (l1_upgrade_transactions_sender, l1_upgrade_transactions_receiver) =
         tokio::sync::mpsc::channel(5);
-
-    tracing::info!("Initializing BatchStorage");
-    let batch_storage = ProofStorage::new(
-        ObjectStoreFactory::new(config.prover_api_config.object_store.clone())
-            .create_store()
-            .await
-            .unwrap(),
-    );
 
     // This is the only place where we initialize L1 provider, every component shares the same
     // cloned provider.
@@ -433,13 +425,15 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         genesis.genesis_upgrade_tx().await.protocol_version
     };
 
+    let interop_tx_pool = InteropTxPool::new(10);
+
     if current_protocol_version >= ProtocolSemanticVersion::new(0, 31, 0) {
         tasks.spawn(
             InteropWatcher::create_watcher(
                 node_startup_state.l1_state.bridgehub.clone(),
                 config.l1_watcher_config.clone().into(),
-                interop_roots_sender,
                 next_interop_root_id,
+                interop_tx_pool.clone(),
             )
             .await
             .expect("failed to start L1 interop roots watcher")
@@ -553,10 +547,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         next_interop_root_id,
         l1_transactions_for_sequencer,
         l1_upgrade_transactions_receiver,
-        InteropTxStream::new(
-            interop_roots_receiver,
-            config.sequencer_config.interop_roots_per_tx,
-        ),
+        interop_tx_pool,
         l2_mempool.clone(),
         block_hashes_for_next_block,
         previous_block_timestamp,
@@ -565,6 +556,8 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         config.sequencer_config.block_pubdata_limit_bytes,
         // We set the value to the same as for the batch, since it should be enforced by batcher, but don't want to exceed it for the block
         config.batcher_config.interop_roots_per_batch_limit,
+        // todo: change to config.sequencer_config.interop_roots_per_tx when contracts are updated
+        1,
         current_protocol_version.clone(),
         config.sequencer_config.fee_collector_address,
         last_constructed_block_ctx_sender,
@@ -585,6 +578,23 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         .expect("failed to start L1 upgrade transaction watcher")
         .run()
         .map(report_exit("L1 upgrade transaction watcher")),
+    );
+
+    // ========== Start L1 Persist Batch Watcher ===========
+
+    let persistent_batch_storage =
+        ExecutedBatchStorage::new(&config.general_config.rocks_db_path.join(BATCH_DB_NAME));
+    tasks.spawn(
+        L1PersistBatchWatcher::create_watcher(
+            config.l1_watcher_config.clone().into(),
+            node_startup_state.l1_state.diamond_proxy.clone(),
+            persistent_batch_storage.clone(),
+            finality_storage.clone(),
+        )
+        .await
+        .expect("failed to start L1 batch persist watcher")
+        .run()
+        .map(report_exit("L1 batch persist watcher")),
     );
 
     // ========== Start Sequencer ===========
@@ -650,7 +660,6 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         run_main_node_pipeline(
             &config,
             l1_provider.clone(),
-            batch_storage.clone(),
             node_startup_state,
             block_replay_storage.clone(),
             &mut tasks,
@@ -664,14 +673,14 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             stop_receiver.clone(),
             tx_acceptance_state_sender,
             sidecar_sender,
-            committed_batch_provider,
+            committed_batch_provider.clone(),
         )
         .await;
     } else {
         // External Node
         run_en_pipeline(
             &config,
-            committed_batch_provider,
+            committed_batch_provider.clone(),
             node_startup_state,
             block_replay_storage.clone(),
             &mut tasks,
@@ -705,7 +714,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         repositories,
         block_replay_storage,
         finality_storage,
-        batch_storage,
+        persistent_batch_storage,
         state,
     );
     tasks.spawn(
@@ -714,6 +723,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             chain_id,
             bridgehub_address,
             bytecode_supplier_address,
+            committed_batch_provider,
             rpc_storage,
             l2_mempool,
             genesis_input_source,
@@ -737,7 +747,6 @@ async fn run_main_node_pipeline(
         impl TxFiller<Ethereum> + WalletProvider<Wallet = EthereumWallet> + 'static,
         impl Provider<Ethereum> + Clone + 'static,
     >,
-    batch_storage: ProofStorage,
     node_state_on_startup: NodeStateOnStartup,
     block_replay_storage: impl WriteReplay + Clone,
     tasks: &mut JoinSet<()>,
@@ -753,8 +762,18 @@ async fn run_main_node_pipeline(
     sidecar_sender: tokio::sync::mpsc::Sender<BlobTransactionSidecar>,
     committed_batch_provider: CommittedBatchProvider,
 ) {
+    tracing::info!("Initializing ProofStorage");
+    // todo: this is used purely for prover API
+    //       decide what to do with it - might still be useful to debug failed proofs
+    let proof_storage = ProofStorage::new(
+        ObjectStoreFactory::new(config.prover_api_config.object_store.clone())
+            .create_store()
+            .await
+            .unwrap(),
+    );
+
     let (fri_proving_step, fri_job_manager) = FriProvingPipelineStep::new(
-        batch_storage.clone(),
+        proof_storage.clone(),
         node_state_on_startup.l1_state.last_proved_batch,
         config.prover_api_config.fri_job_timeout,
         config.prover_api_config.max_assigned_batch_range,
@@ -772,7 +791,7 @@ async fn run_main_node_pipeline(
             prover_server::run(
                 fri_job_manager.clone(),
                 snark_job_manager.clone(),
-                batch_storage.clone(),
+                proof_storage.clone(),
                 config.prover_api_config.address.clone(),
             )
             .map(report_exit("prover_server_job")),
@@ -865,7 +884,7 @@ async fn run_main_node_pipeline(
         .pipe(GaplessCommitter {
             next_expected_batch_number: node_state_on_startup.l1_state.last_executed_batch + 1,
             last_committed_batch_number: node_state_on_startup.l1_state.last_committed_batch,
-            proof_storage: batch_storage.clone(),
+            proof_storage,
             batch_verification_l1_config: node_state_on_startup.l1_state.batch_verification.clone(),
         })
         .pipe(UpgradeGatekeeper::new(
@@ -1051,7 +1070,7 @@ async fn commit_proof_execute_block_numbers(
         committed_batch_provider
             .get(l1_state.last_committed_batch)
             .expect("last committed batch was not discovered on L1")
-            .last_block()
+            .last_block_number()
     };
 
     // only used to log on node startup
@@ -1061,7 +1080,7 @@ async fn commit_proof_execute_block_numbers(
         committed_batch_provider
             .get(l1_state.last_proved_batch)
             .expect("last proved batch was not discovered on L1")
-            .last_block()
+            .last_block_number()
     };
 
     let last_executed_block = if l1_state.last_executed_batch == 0 {
@@ -1070,7 +1089,7 @@ async fn commit_proof_execute_block_numbers(
         committed_batch_provider
             .get(l1_state.last_executed_batch)
             .expect("last executed batch was not discovered on L1")
-            .last_block()
+            .last_block_number()
     };
     (last_committed_block, last_proved_block, last_executed_block)
 }
