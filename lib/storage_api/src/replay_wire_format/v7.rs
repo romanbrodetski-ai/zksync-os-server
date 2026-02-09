@@ -9,8 +9,9 @@ use bincode::{Decode, Encode};
 use alloy::primitives::{Address, B256, U256};
 use zksync_os_types::ProtocolSemanticVersion;
 
-// Differences from v5:
-// - added `starting_interop_event_index` to `ReplayWireFormatV6`
+// Differences from v6:
+// - added `starting_interop_root_id` to `ReplayWireFormatV7`
+// - removed `starting_interop_event_index` from `ReplayWireFormatV7`
 
 /// The format ReplayRecords are currently sent in
 #[derive(Encode, Decode)]

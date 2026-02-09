@@ -273,13 +273,15 @@ pub async fn find_l1_execute_block_by_batch_number(
     .await
 }
 
-
 pub async fn find_l1_block_by_interop_root_id(
     bridgehub: Bridgehub<DynProvider>,
     next_interop_root_id: u64,
 ) -> anyhow::Result<BlockNumber> {
     let message_root_address = bridgehub.message_root_address().await?;
-    let message_root = Arc::new(    MessageRoot::new(message_root_address, bridgehub.provider().clone()));
+    let message_root = Arc::new(MessageRoot::new(
+        message_root_address,
+        bridgehub.provider().clone(),
+    ));
 
     let latest = message_root.provider().get_block_number().await?;
 
@@ -316,7 +318,6 @@ pub async fn find_l1_block_by_interop_root_id(
 
     Ok(lo)
 }
-
 
 /// Fetches and decodes stored batch data for batch `batch_number` that is expected to have been
 /// committed in `l1_block_number`. Returns `None` if requested batch has not been committed in

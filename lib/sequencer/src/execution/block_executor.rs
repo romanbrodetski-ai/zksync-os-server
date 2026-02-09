@@ -358,7 +358,6 @@ fn should_exclude_and_seal(
     }
     if let ZkEnvelope::InteropRoots(interop_roots_tx) = tx.inner.inner()
         && interop_roots_count + interop_roots_tx.interop_roots_count() > interop_roots_per_block
-        && interop_roots_count + interop_roots_tx.interop_roots_count() > interop_roots_per_block
     {
         return Some(SealReason::LimitedInteropOnlyBlock);
     }

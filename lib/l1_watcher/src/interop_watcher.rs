@@ -1,3 +1,4 @@
+use alloy::primitives::ruint::FromUintError;
 use alloy::rpc::types::Log;
 use alloy::{primitives::Address, providers::DynProvider};
 use zksync_os_contract_interface::IMessageRoot::NewInteropRoot;
@@ -76,7 +77,10 @@ impl ProcessL1Event for InteropWatcher {
         };
 
         self.tx_pool.add_root(IndexedInteropRoot {
-            log_id: tx.logId.try_into().unwrap(),
+            log_id: tx
+                .logId
+                .try_into()
+                .map_err(|e: FromUintError<u64>| L1WatcherError::Other(e.into()))?,
             root: interop_root,
         });
 

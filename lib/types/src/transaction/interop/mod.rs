@@ -9,7 +9,7 @@ use alloy::rpc::types::{AccessList, SignedAuthorization};
 use alloy::sol_types::SolCall;
 use alloy_rlp::{BufMut, Encodable};
 use serde::{Deserialize, Serialize};
-use zksync_os_contract_interface::IMessageRoot::addInteropRootCall;
+use zksync_os_contract_interface::IMessageRoot::addInteropRootsInBatchCall;
 use zksync_os_contract_interface::InteropRoot;
 
 pub mod tx;
@@ -98,10 +98,8 @@ mod tx_serde {
 
 impl InteropRootsEnvelope {
     pub fn from_interop_roots(interop_roots: Vec<InteropRoot>) -> Self {
-        let calldata = addInteropRootCall {
-            chainId: interop_roots[0].chainId,
-            blockOrBatchNumber: interop_roots[0].blockOrBatchNumber,
-            sides: interop_roots[0].sides.clone(),
+        let calldata = addInteropRootsInBatchCall {
+            interopRootsInput: interop_roots,
         }
         .abi_encode();
 
@@ -117,17 +115,10 @@ impl InteropRootsEnvelope {
     }
 
     pub fn interop_roots_count(&self) -> u64 {
-        // todo: return back once contracts can handle multiple roots in one call
-        // addInteropRootsInBatchCall::abi_decode(self.inner.input())
-        //     .expect("failed to decode interop roots")
-        //     .interopRootsInput
-        //     .len() as u64
-        // todo: return back once contracts can handle multiple roots in one call
-        // addInteropRootsInBatchCall::abi_decode(self.inner.input())
-        //     .expect("failed to decode interop roots")
-        //     .interopRootsInput
-        //     .len() as u64
-        1
+        addInteropRootsInBatchCall::abi_decode(self.inner.input())
+            .expect("failed to decode interop roots")
+            .interopRootsInput
+            .len() as u64
     }
 
     pub fn hash(&self) -> &B256 {

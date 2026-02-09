@@ -46,6 +46,8 @@ pub struct ReplayRecord {
     pub block_output_hash: B256,
     /// Forced preimages to be included before the block execution.
     pub force_preimages: Vec<(B256, Vec<u8>)>,
+    /// The id of the interop root that was executed first in the block
+    /// If there is no interop root tx in the block, equals to the previous block's value
     pub starting_interop_root_id: u64,
 }
 
