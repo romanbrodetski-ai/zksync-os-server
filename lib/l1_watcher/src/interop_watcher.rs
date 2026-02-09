@@ -78,7 +78,7 @@ impl ProcessRawEvents for InteropWatcher {
             indexes.insert(sol_event.logId, log);
         }
 
-        return indexes.values().cloned().collect();
+        indexes.into_values().collect()
     }
 
     async fn process_raw_event(&mut self, log: Log) -> Result<(), L1WatcherError> {
