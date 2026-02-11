@@ -64,6 +64,7 @@ async fn send_replay_record_matching_version() {
     peer0.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV1, _> {
         replay: InMemReplay(HashMap::from([(1, record1.clone())])),
         node_role: NodeRole::MainNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -75,6 +76,7 @@ async fn send_replay_record_matching_version() {
     peer1.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV1, _> {
         replay: InMemReplay::default(),
         node_role: NodeRole::ExternalNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -110,6 +112,7 @@ async fn send_replay_record_different_versions() {
     peer0.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV1, _> {
         replay: InMemReplay(HashMap::from([(1, record1.clone())])),
         node_role: NodeRole::MainNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -120,6 +123,7 @@ async fn send_replay_record_different_versions() {
     peer0.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV0, _> {
         replay: InMemReplay(HashMap::from([(1, record1.clone())])),
         node_role: NodeRole::MainNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -131,6 +135,7 @@ async fn send_replay_record_different_versions() {
     peer1.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV0, _> {
         replay: InMemReplay::default(),
         node_role: NodeRole::ExternalNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -171,6 +176,7 @@ async fn max_active_connections() {
     peer0.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV1, _> {
         replay: InMemReplay::default(),
         node_role: NodeRole::MainNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 1),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -184,6 +190,7 @@ async fn max_active_connections() {
     peer1.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV1, _> {
         replay: InMemReplay::default(),
         node_role: NodeRole::ExternalNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),
@@ -197,6 +204,7 @@ async fn max_active_connections() {
     peer2.add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV1, _> {
         replay: InMemReplay::default(),
         node_role: NodeRole::ExternalNode,
+        record_overrides: vec![],
         state: ProtocolState::new(protocol_tx, 100),
         replay_sender: replay_tx,
         _phantom: Default::default(),

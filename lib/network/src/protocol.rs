@@ -2,7 +2,7 @@
 
 use crate::version::AnyZksProtocolVersion;
 use crate::wire::message::{ZKS_PROTOCOL, ZksMessage};
-use crate::wire::replays::WireReplayRecord;
+use crate::wire::replays::{RecordOverride, WireReplayRecord};
 use alloy::primitives::bytes::BytesMut;
 use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
@@ -28,6 +28,8 @@ pub struct ZksProtocolHandler<P: AnyZksProtocolVersion, Replay: Clone> {
     pub replay: Replay,
     /// Node's role in the network.
     pub node_role: NodeRole,
+    /// All overrides to pass through when requesting records.
+    pub record_overrides: Vec<RecordOverride>,
     /// Current state of the protocol.
     pub state: ProtocolState,
     pub replay_sender: mpsc::UnboundedSender<ReplayRecord>,
@@ -42,6 +44,7 @@ impl<P: AnyZksProtocolVersion, Replay: Clone> ZksProtocolHandler<P, Replay> {
         ZksProtocolConnectionHandler {
             replay: self.replay.clone(),
             node_role: self.node_role.clone(),
+            record_overrides: self.record_overrides.clone(),
             state: self.state.clone(),
             replay_sender: self.replay_sender.clone(),
             permit,
@@ -157,6 +160,8 @@ pub struct ZksProtocolConnectionHandler<P: AnyZksProtocolVersion, Replay: Clone>
     replay: Replay,
     /// Node's role in the network.
     node_role: NodeRole,
+    /// All overrides to pass through when requesting records.
+    record_overrides: Vec<RecordOverride>,
     /// Current state of the protocol.
     state: ProtocolState,
     replay_sender: mpsc::UnboundedSender<ReplayRecord>,
@@ -210,10 +215,9 @@ impl<P: AnyZksProtocolVersion, Replay: ReadReplay + Clone> ConnectionHandler
                 }
             } else {
                 State::WantsToRequest {
-                    // todo: support record_overrides
                     message: ZksMessage::<P>::get_block_replays(
                         self.replay.latest_record() + 1,
-                        vec![],
+                        self.record_overrides,
                     ),
                 }
             },
