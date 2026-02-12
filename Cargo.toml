@@ -84,11 +84,11 @@ zksync_os_interface = { version = "0.0.10" }
 # Historical versions of zksync-os that are kept to be able to replay old blocks and simulate calls on them. Only
 # forward system dependencies are expected to be in this section.
 
-zk_os_forward_system_0_0_26 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "v0.0.26-rc2", features = [
+zk_os_forward_system_0_0_26 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-0-26-new-rust-toolchain", features = [
     "evm-compatibility",
     "no_print",
 ] }
-zk_os_forward_system_0_1_0 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "v0.1.0-rc1", features = [
+zk_os_forward_system_0_1_0 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-1-0-new-rust-toolchain", features = [
     "production",
     "no_print",
     # We had an issue in this version - it's compilable only with the testing feature.
@@ -97,10 +97,10 @@ zk_os_forward_system_0_1_0 = { package = "forward_system", git = "https://github
 ], default-features = false }
 # v0.2.x is not historical yet, but we use a separate version for simulation so that `eth_estimateGas` can work with
 # 0-balance accounts. The fix was not a part of v0.2.5 and unfortunately cannot be included without changing `app.bin`.
-zk_os_forward_system_0_2_6 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.6-simulation-only", features = [
-    "production",
-    "no_print",
-], default-features = false }
+# zk_os_forward_system_0_2_6 = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "vv-0-2-5-new-rust-toolchain", features = [
+#     "production",
+#     "no_print",
+# ], default-features = false }
 
 # Previous version of zksync-os that can still be used to prove and submit batches. Also includes airbender dependencies
 # that are necessary to verify said proofs on the server end.
@@ -122,14 +122,14 @@ zk_os_forward_system_0_2_6 = { package = "forward_system", git = "https://github
 #
 # When a new version is released this version gets downgraded to the "previous version" section above.
 
-zk_os_forward_system = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.5", features = [
+zk_os_forward_system = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-2-5-new-rust-toolchain", features = [
     "production",
     "no_print",
 ], default-features = false }
-zk_ee = { git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.5" }
-zk_os_basic_system = { package = "basic_system", git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.5" }
-zk_os_api = { package = "zksync_os_api", git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.5" }
-zk_os_evm_interpreter = { package = "evm_interpreter", git = "https://github.com/matter-labs/zksync-os", tag = "v0.2.5" }
+zk_ee = { git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-2-5-new-rust-toolchain" }
+zk_os_basic_system = { package = "basic_system", git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-2-5-new-rust-toolchain" }
+zk_os_api = { package = "zksync_os_api", git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-2-5-new-rust-toolchain" }
+zk_os_evm_interpreter = { package = "evm_interpreter", git = "https://github.com/matter-labs/zksync-os", branch = "vv-0-2-5-new-rust-toolchain" }
 execution_utils = { git = "https://github.com/matter-labs/zksync-airbender.git", tag = "v0.5.2" }
 full_statement_verifier = { git = "https://github.com/matter-labs/zksync-airbender.git", tag = "v0.5.2" }
 zksync_os_prover_service = { git = "https://github.com/matter-labs/zksync-airbender-prover.git", tag = "v0.7.0" }
@@ -138,10 +138,10 @@ zksync_os_prover_service = { git = "https://github.com/matter-labs/zksync-airben
 #
 # Can be updated at any time and changing it does not count as a breaking change.
 
-zk_os_forward_system_dev = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260122-4", features = [
-    "production",
-    "no_print",
-], default-features = false }
+# zk_os_forward_system_dev = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260122-4", features = [
+#     "production",
+#     "no_print",
+# ], default-features = false }
 
 # Other dependencies.
 
@@ -155,7 +155,7 @@ futures = "0.3"
 vise = "0.3.0"
 vise-exporter = "0.3.0"
 bincode = { version = "2.0.1", features = ["serde"] }
-smart-config = { version = "0.4.0-pre.2"}
+smart-config = { version = "0.4.0-pre.2" }
 smart-config-commands = { version = "0.4.0-pre.2" }
 thiserror = "2.0.12"
 clap = "4.2.2"
