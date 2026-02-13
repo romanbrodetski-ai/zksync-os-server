@@ -113,7 +113,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
 ) {
     let mut tasks: JoinSet<()> = JoinSet::new();
 
-    let node_role = config.general_config.node_role.clone();
+    let node_role = config.general_config.node_role;
     let role: &'static str = node_role.as_str();
 
     // Priority tree is required for main node
@@ -276,7 +276,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         commit_proof_execute_block_numbers(&l1_state, &committed_batch_provider).await;
 
     let node_startup_state = NodeStateOnStartup {
-        node_role: node_role.clone(),
+        node_role,
         l1_state: l1_state.clone(),
         state_block_range_available: state.block_range_available(),
         block_replay_storage_last_block: block_replay_storage.latest_record(),
@@ -365,7 +365,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
 
         let network_service = NetworkService::new(
             config.network_config.clone().into(),
-            node_role.clone(),
+            node_role,
             block_replay_storage.clone(),
             starting_block,
             // This will be gone once we migrate away from record overrides

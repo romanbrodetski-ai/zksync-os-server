@@ -46,7 +46,7 @@ impl<P: AnyZksProtocolVersion, Replay: Clone> ZksProtocolHandler<P, Replay> {
     ) -> ZksProtocolConnectionHandler<P, Replay> {
         ZksProtocolConnectionHandler {
             replay: self.replay.clone(),
-            node_role: self.node_role.clone(),
+            node_role: self.node_role,
             starting_block: self.starting_block,
             record_overrides: self.record_overrides.clone(),
             state: self.state.clone(),

@@ -936,7 +936,7 @@ impl From<RpcConfig> for zksync_os_rpc::RpcConfig {
 impl From<&Config> for zksync_os_sequencer::config::SequencerConfig {
     fn from(c: &Config) -> Self {
         Self {
-            node_role: c.general_config.node_role.clone(),
+            node_role: c.general_config.node_role,
             block_time: c.sequencer_config.block_time,
             max_transactions_in_block: c.sequencer_config.max_transactions_in_block,
             block_dump_path: c.sequencer_config.block_dump_path.clone(),
