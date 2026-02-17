@@ -5,7 +5,7 @@ use crate::wire::replays::RecordOverride;
 use alloy::primitives::BlockNumber;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5;
-use reth_eth_wire::HelloMessageWithProtocols;
+use reth_eth_wire::{EthVersion, HelloMessageWithProtocols};
 use reth_net_nat::NatResolver;
 use reth_network::error::NetworkError;
 use reth_network::eth_requests::EthRequestHandler;
@@ -64,6 +64,8 @@ impl NetworkService {
                 builder.hello_message(
                     HelloMessageWithProtocols::builder(peer_id)
                         .client_version(NODE_CLIENT_VERSION)
+                        // Use Eth68 (i.e. <Eth69) to avoid sending periodic `BlockRangeUpdate` messages
+                        .protocol(EthVersion::Eth68)
                         .build(),
                 )
             })
