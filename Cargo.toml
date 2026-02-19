@@ -137,7 +137,7 @@ zksync_os_prover_service = { git = "https://github.com/matter-labs/zksync-airben
 #
 # Can be updated at any time and changing it does not count as a breaking change.
 
-zk_os_forward_system_dev = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260219", features = [
+zk_os_forward_system_dev = { package = "forward_system", git = "https://github.com/matter-labs/zksync-os", tag = "dev-20260219-2", features = [
     "production",
     "no_print",
 ], default-features = false }
