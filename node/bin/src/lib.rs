@@ -887,7 +887,13 @@ async fn run_main_node_pipeline(
             batch_verification_l1_config: node_state_on_startup.l1_state.batch_verification.clone(),
         })
         .pipe(UpgradeGatekeeper::new(
-            node_state_on_startup.l1_state.diamond_proxy.clone(),
+            l1_provider.clone(),
+            node_state_on_startup.l1_state.diamond_proxy_address(),
+            node_state_on_startup.l1_state.validator_timelock,
+            config.l1_sender_config.operator_execute_sk.clone(),
+            config.l1_sender_config.max_fee_per_gas.0,
+            config.l1_sender_config.max_priority_fee_per_gas.0,
+            config.l1_sender_config.poll_interval,
         ))
         .pipe(L1Sender::<_, _, CommitCommand> {
             provider: l1_provider.clone(),

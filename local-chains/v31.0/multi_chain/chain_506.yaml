@@ -1,0 +1,18 @@
+general:
+  ephemeral: true
+genesis:
+  bridgehub_address: '0x6453ce4b273d94c3fea7b43f3992ab3804366193'
+  bytecode_supplier_address: '0x062e5d4af6b11785d187f7ba6d8a274be38e27be'
+  genesis_input_path: ./local-chains/v31.0/default/genesis.json
+  chain_id: 6565
+l1_sender:
+  operator_commit_sk: '0xcc76ffed59c99aa6adfa92500492c0605c99b2b8af36e141dd95ca08cc2c461b'
+  operator_prove_sk: '0x6c81bc255d76120af39f5f2d17cbf2020f050bd188bea722aa482dd3fce649b1'
+  operator_execute_sk: '0x3c594fbbaa7dbfe2ea59719cfeb780bb598d4632eb2cef31785fd388950f9394'
+rpc:
+  address: 0.0.0.0:3050
+external_price_api_client:
+  source: Forced
+  forced_prices:
+    '0x0000000000000000000000000000000000000001': 3000
+

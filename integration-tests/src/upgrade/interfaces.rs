@@ -55,6 +55,7 @@ alloy::sol! {
 
         // Getters facet
         function getAdmin() external view returns (address);
+        function getProtocolVersion() external view returns (uint256);
 
         // Admin facet
         function upgradeChainFromVersion(uint256 _protocolVersion, DiamondCutData calldata _cutData) external;

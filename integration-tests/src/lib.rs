@@ -67,6 +67,7 @@ pub struct Tester {
     pub l2_wallet: EthereumWallet,
 
     pub prover_tester: ProverTester,
+    pub protocol_version: String,
 
     stop_sender: watch::Sender<bool>,
     main_task: JoinHandle<()>,
@@ -129,7 +130,7 @@ impl Tester {
             false,
             Some(overrides_fun),
             Some(self.main_node_tempdir.clone()),
-            PROTOCOL_VERSION,
+            self.protocol_version.as_str(),
         )
         .await
     }
@@ -367,6 +368,7 @@ impl Tester {
                 EthDynProvider::new(l2_provider.clone()),
                 DynProvider::new(l2_zk_provider.clone()),
             ),
+            protocol_version: protocol_version.to_string(),
             stop_sender,
             main_task,
             l1_address,
@@ -386,6 +388,7 @@ pub struct TesterBuilder {
     batch_verification_threshold: Option<u64>,
     fee_config: Option<FeeConfig>,
     estimate_gas_pubdata_price_factor: Option<f64>,
+    protocol_version: Option<String>,
 }
 
 impl TesterBuilder {
@@ -415,7 +418,15 @@ impl TesterBuilder {
         self
     }
 
+    pub fn protocol_version(mut self, protocol_version: &str) -> Self {
+        self.protocol_version = Some(protocol_version.to_string());
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<Tester> {
+        let protocol_version = self
+            .protocol_version
+            .unwrap_or_else(|| NEXT_PROTOCOL_VERSION.to_string());
         let l1_locked_port = LockedPort::acquire_unused().await?;
         let l1_address = format!("http://localhost:{}", l1_locked_port.port);
 
@@ -425,7 +436,7 @@ impl TesterBuilder {
                 .chain_id(L1_CHAIN_ID)
                 .arg("--load-state")
                 .arg(get_l1_state_path(ChainLayout::Default {
-                    protocol_version: PROTOCOL_VERSION,
+                    protocol_version: protocol_version.as_str(),
                 }))
         })?;
 
@@ -454,7 +465,7 @@ impl TesterBuilder {
             self.enable_prover,
             Some(overrides_fun),
             None,
-            PROTOCOL_VERSION,
+            protocol_version.as_str(),
         )
         .await
     }

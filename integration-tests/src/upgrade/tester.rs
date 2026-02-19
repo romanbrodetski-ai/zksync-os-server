@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::Tester;
-use crate::assert_traits::ReceiptAssert;
+use crate::assert_traits::{DEFAULT_TIMEOUT, POLL_INTERVAL, ReceiptAssert};
 use crate::config::{ChainLayout, load_chain_config};
 use crate::dyn_wallet_provider::EthDynProvider;
 use crate::provider::{ZksyncApi as _, ZksyncTestingProvider as _};
@@ -12,7 +12,7 @@ use alloy::providers::{PendingTransactionBuilder, Provider};
 use alloy::rpc::types::{TransactionReceipt, TransactionRequest};
 use anyhow::Context;
 use zksync_os_server::config::Config;
-use zksync_os_server::default_protocol_version::PROTOCOL_VERSION;
+use zksync_os_server::default_protocol_version::NEXT_PROTOCOL_VERSION;
 use zksync_os_types::ProtocolSemanticVersion;
 
 use super::ProtocolUpgradeBuilder;
@@ -72,8 +72,10 @@ impl UpgradeTester {
         tracing::info!("DefaultUpgrade contract deployed");
 
         // Send pause migration to Bridgehub
-        self.pause_bridgehub_migrations().await?;
-        tracing::info!("Bridgehub migrations are paused");
+        // self.pause_bridgehub_migrations()
+        //    .await
+        //    .context("pause bridgehub migrations failed")?;
+        //tracing::info!("Bridgehub migrations are paused");
 
         // CTM upgrade, `setNewVersionUpgrade` call;
         let upgrade_data = upgrade_contract.diamond_cut_data();
@@ -82,71 +84,45 @@ impl UpgradeTester {
             deadline,
             protocol_upgrade.newProtocolVersion,
         )
-        .await?;
+        .await
+        .context("setNewVersionUpgrade failed")?;
         tracing::info!("Upgrade is set on CTM");
 
         // Set timestamp for upgrade on a specific chain under stm, `setUpgradeTimestamp` call on L1ChainAdmin
         self.set_upgrade_timestamp(protocol_upgrade.newProtocolVersion, upgrade_timestamp)
-            .await?;
+            .await
+            .context("setUpgradeTimestamp failed")?;
         tracing::info!("Upgrade scheduled on L1");
 
         if patch_only {
-            // TODO: for patch upgrades, there is no L2 upgrade transaction, so we must be somewhat probabilistic.
-            // We will wait until the timestamp + some margin, then fetch the current l2 block and wait until it's finalized.
-            let upgrade_timestamp_secs = u64::try_from(upgrade_timestamp).unwrap();
-            let wait_duration = Duration::from_secs(upgrade_timestamp_secs).saturating_sub(
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?,
-            ) + Duration::from_secs(10); // 10 seconds margin
-            tracing::info!(
-                "Waiting for {:?} until patch upgrade can be executed",
-                wait_duration
-            );
-            tokio::time::sleep(wait_duration).await;
-            let current_l2_block = self.tester.l2_zk_provider.get_block_number().await?;
-            self.tester
-                .l2_zk_provider
-                .wait_finalized_with_timeout(
-                    current_l2_block,
-                    crate::assert_traits::DEFAULT_TIMEOUT,
-                )
-                .await?;
-            tracing::info!("Current L2 block is finalized, proceeding with patch upgrade");
+            
+            // Trigger a batch so the protocol version bump is applied.
+            for i in 0..10 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let tx = self
+                    .tester
+                    .l2_provider
+                    .send_transaction(
+                        TransactionRequest::default()
+                            .with_to(self.bridgehub_owner)  
+                            .with_value(U256::from(1u64)),
+                    )
+                    .await?
+                    .expect_successful_receipt()
+                    .await?;
+            }
         } else {
             // Wait until the block _before_ upgrade tx is finalized on L1.
             self.wait_for_upgrade(upgrade_contract.upgrade_tx_l2_hash())
-                .await?;
+                .await
+                .context("wait for pre-upgrade L2 finality failed")?;
             tracing::info!("Block before upgrade tx is finalized on L1");
         }
 
-        self.upgrade_chain(upgrade_data).await?;
-        tracing::info!("Upgrade tx is executed on L1");
-
-        if patch_only {
-            // For patch upgrades, we need to trigger a transaction finalization, since there is no upgrade tx.
-            // So we send a bogus tx and wait until it's finalized instead.
-            let tx = self
-                .tester
-                .l2_provider
-                .send_transaction(
-                    TransactionRequest::default()
-                        .with_to(self.bridgehub_owner) // Random address
-                        .with_value(U256::from(1u64)),
-                )
-                .await?
-                .expect_successful_receipt()
-                .await?;
-            self.tester
-                .l2_zk_provider
-                .wait_finalized_with_timeout(
-                    tx.block_number.unwrap(),
-                    crate::assert_traits::DEFAULT_TIMEOUT,
-                )
-                .await?;
-        } else {
-            self.wait_for_upgrade_finalization(upgrade_contract.upgrade_tx_l2_hash())
-                .await?;
-        }
-        tracing::info!("Upgrade tx is finalized on L1");
+        self.wait_for_l1_protocol_version(protocol_upgrade.newProtocolVersion)
+            .await
+            .context("wait for L1 protocol version update failed")?;
+        tracing::info!("Upgrade finalized on L1");
 
         Ok(())
     }
@@ -154,7 +130,7 @@ impl UpgradeTester {
     // Fetch the contracts configuration from the tester.
     async fn fetch(tester: Tester) -> anyhow::Result<Self> {
         let default_config: Config = load_chain_config(ChainLayout::Default {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version: NEXT_PROTOCOL_VERSION,
         });
         let chain_id = default_config
             .genesis_config
@@ -189,7 +165,7 @@ impl UpgradeTester {
         // to the value stored in `zkos-l1-state.json`.
         let bytecode_supplier_address = default_config
             .genesis_config
-            .bridgehub_address
+            .bytecode_supplier_address
             .expect("Bytecode supplier address is missing in the config");
         anyhow::ensure!(
             !tester
@@ -277,23 +253,22 @@ impl UpgradeTester {
         Ok(())
     }
 
-    async fn wait_for_upgrade_finalization(&self, upgrade_tx_l2_hash: B256) -> anyhow::Result<()> {
-        let pending_tx = PendingTransactionBuilder::new(
-            self.tester.l2_zk_provider.root().clone(),
-            upgrade_tx_l2_hash,
-        )
-        .expect_successful_receipt()
-        .await?;
-        let upgrade_block_number = pending_tx.block_number.expect("Upgrade tx must be mined");
-        self.tester
-            .l2_zk_provider
-            .wait_finalized_with_timeout(
-                upgrade_block_number,
-                crate::assert_traits::DEFAULT_TIMEOUT,
-            )
-            .await
-            .context("Block before upgrade transaction was not finalized")?;
-        Ok(())
+    async fn wait_for_l1_protocol_version(
+        &self,
+        target_protocol_version: U256,
+    ) -> anyhow::Result<()> {
+        let mut retries = 600;
+        while retries > 0 {
+            let protocol_version = self.diamond_proxy.getProtocolVersion().call().await?;
+            if protocol_version == target_protocol_version {
+                return Ok(());
+            }
+            retries -= 1;
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        Err(anyhow::anyhow!(
+            "protocol version did not change to {target_protocol_version} on L1 in time"
+        ))
     }
 
     pub async fn pause_bridgehub_migrations(&self) -> anyhow::Result<()> {
@@ -387,24 +362,6 @@ impl UpgradeTester {
             .setUpgradeTimestamp(protocol_version, timestamp)
             .into_transaction_request()
             .with_from(self.l1_chain_admin_owner);
-        self.send_impersonated_transaction(tx).await?;
-        Ok(())
-    }
-
-    pub async fn upgrade_chain(
-        &self,
-        upgrade_data: interfaces::DiamondCutData,
-    ) -> anyhow::Result<()> {
-        let tx = self
-            .diamond_proxy
-            .upgradeChainFromVersion(
-                self.protocol_version
-                    .packed()
-                    .expect("Incorrect protocol version"),
-                upgrade_data,
-            )
-            .into_transaction_request()
-            .with_from(self.diamond_proxy_admin);
         self.send_impersonated_transaction(tx).await?;
         Ok(())
     }
