@@ -159,7 +159,7 @@ impl BatchInfo {
     pub fn public_input_hash(&self, protocol_version: &ProtocolSemanticVersion) -> B256 {
         let commit_info = &self.commit_info;
         let upgrade_tx_hash = self.upgrade_tx_hash.unwrap_or(B256::ZERO);
-        let result = match protocol_version.minor {
+        match protocol_version.minor {
             // v30 and v31 use different packed layouts for batch output hash:
             // v31 inserts number_of_layer2_txs between L1 tx count and priority_operations_hash.
             30 => B256::from(keccak256(
@@ -194,8 +194,7 @@ impl BatchInfo {
                     .abi_encode_packed(),
             )),
             _ => panic!("Unsupported protocol version: {protocol_version}"),
-        };
-        result
+        }
     }
 
     pub fn into_stored(self, protocol_version: &ProtocolSemanticVersion) -> StoredBatchInfo {
