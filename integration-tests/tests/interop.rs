@@ -5,7 +5,6 @@ use alloy::{
     primitives::{Address, Bytes, FixedBytes, U256, address, keccak256},
     providers::utils::Eip1559Estimator,
     providers::{PendingTransactionBuilder, Provider},
-    rpc::types::TransactionRequest,
     sol,
     sol_types::{SolCall, SolType, SolValue},
 };
@@ -18,7 +17,7 @@ use zksync_os_integration_tests::{
     MultiChainTester, Tester, assert_traits::ReceiptAssert, contracts::TestERC20,
     provider::ZksyncApi,
 };
-use zksync_os_types::{L1PriorityTxType, L1TxType, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE};
+use zksync_os_types::REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE;
 
 const L2_INTEROP_CENTER_ADDRESS: Address = address!("000000000000000000000000000000000001000d");
 const L2_INTEROP_HANDLER_ADDRESS: Address = address!("000000000000000000000000000000000001000e");
