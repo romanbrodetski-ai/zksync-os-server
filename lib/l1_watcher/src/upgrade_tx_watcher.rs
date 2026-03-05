@@ -63,10 +63,10 @@ impl L1UpgradeTxWatcher {
         );
 
         let admin_l1 = zk_chain_l1.get_admin().await?;
-        tracing::info!(admin_l1 = ?admin_l1, "resolved chain admin");
+        tracing::debug!(admin_l1 = ?admin_l1, "resolved chain admin");
 
         let ctm_sl = zk_chain_sl.get_chain_type_manager().await?;
-        tracing::info!(ctm_sl = ?ctm_sl, "resolved chain type manager");
+        tracing::debug!(ctm_sl = ?ctm_sl, "resolved chain type manager");
 
         let current_l1_block = zk_chain_l1.provider().get_block_number().await?;
         let last_l1_block = find_l1_block_by_protocol_version(zk_chain_l1.clone(), current_protocol_version.clone())
@@ -94,7 +94,7 @@ impl L1UpgradeTxWatcher {
             "Bytecode supplier contract is not deployed at expected address {bytecode_supplier_address:?}"
         );
 
-        tracing::info!(last_l1_block, "checking block starting from");
+        tracing::debug!(last_l1_block, "checking block starting from");
 
         let this = Self {
             admin_contract_l1: admin_l1,
@@ -285,7 +285,7 @@ impl ProcessL1Event for L1UpgradeTxWatcher {
         _log: Log,
     ) -> Result<(), L1WatcherError> {
         if request.protocol_version <= self.current_protocol_version {
-            tracing::info!(
+            tracing::debug!(
                 ?request.protocol_version,
                 ?self.current_protocol_version,
                 "ignoring upgrade timestamp for older or equal protocol version"

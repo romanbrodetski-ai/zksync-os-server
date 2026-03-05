@@ -90,7 +90,7 @@ impl L1Watcher {
                 "no new events"
             );
         } else {
-            tracing::info!(
+            tracing::debug!(
                 event_name = &self.processor.name(),
                 event_count = new_logs.len(),
                 l1_block_from = from,

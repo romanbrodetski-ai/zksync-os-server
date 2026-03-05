@@ -268,7 +268,7 @@ pub(super) async fn peek_snark_job(
                         fri_proofs.push(general_purpose::STANDARD.encode(real.proof()))
                     }
                     FriProof::Fake => {
-                        tracing::info!(
+                        tracing::warn!(
                             "Requested FRI proof for batch {} is fake (range {}-{})",
                             batch_number,
                             from_batch_number,
@@ -291,7 +291,7 @@ pub(super) async fn peek_snark_job(
                 };
             }
             Ok(None) => {
-                tracing::info!(
+                tracing::debug!(
                     "No FRI proof found for batch {batch_number} (range {}-{})",
                     from_batch_number,
                     to_batch_number
@@ -303,7 +303,7 @@ pub(super) async fn peek_snark_job(
                     .into_response();
             }
             Err(e) => {
-                tracing::info!("Error retrieving FRI proof for batch {batch_number}: {e}");
+                tracing::error!("Error retrieving FRI proof for batch {batch_number}: {e}");
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Error retrieving proof: {e}"),
@@ -351,7 +351,7 @@ pub(super) async fn get_failed_fri_proof(
         )
             .into_response(),
         Err(e) => {
-            tracing::info!("Error retrieving failed proof for batch {batch_number}: {e}");
+            tracing::error!("Error retrieving failed proof for batch {batch_number}: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Error retrieving failed proof: {e}"),

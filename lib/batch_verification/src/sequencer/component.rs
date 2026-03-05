@@ -251,7 +251,7 @@ impl BatchVerifier {
 
             // We skip signing batches that were already committed. This happens on startup
             if batch_envelope.batch_number() <= self.last_committed_batch_number {
-                tracing::info!(
+                tracing::debug!(
                     "Skipping signing of already committed batch {}",
                     batch_envelope.batch_number()
                 );

@@ -124,7 +124,7 @@ impl FriJobManager {
     pub async fn peek_batch_data(&self, batch_number: u64) -> Option<(&str, ProverInput)> {
         match self.jobs.get_prover_input(batch_number).await {
             Some((vk_hash, prover_input)) => {
-                tracing::info!("Batch data is peeked for batch number {batch_number}");
+                tracing::debug!("Batch data is peeked for batch number {batch_number}");
                 Some((vk_hash, prover_input))
             }
             None => {

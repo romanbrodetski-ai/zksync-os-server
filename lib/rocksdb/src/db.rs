@@ -242,7 +242,7 @@ impl RocksDBInner {
             if cfs_with_stopped_writes.is_empty() {
                 return;
             } else {
-                tracing::info!(
+                tracing::warn!(
                     "Writes are stopped for column families {cfs_with_stopped_writes:?} in DB `{}` \
                      (retry #{retry_idx})",
                     self.db_name
@@ -705,7 +705,7 @@ impl RocksDB<()> {
         let (lock, cvar) = &ROCKSDB_INSTANCE_COUNTER;
         let mut num_instances = lock.lock().unwrap();
         while *num_instances != 0 {
-            tracing::info!(
+            tracing::debug!(
                 "Waiting for all the RocksDB instances to be dropped, {} remaining",
                 *num_instances
             );

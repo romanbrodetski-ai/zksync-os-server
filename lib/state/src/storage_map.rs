@@ -61,7 +61,7 @@ impl StorageMap {
             .persistent_storage_map
             .persistent_block_lower_bound
             .load(Ordering::Relaxed);
-        tracing::debug!(
+        tracing::trace!(
             "Creating StorageMapView for block {} with persistence bounds {} to {} and latest block {}",
             block_number,
             persistent_block_lower_bound,
@@ -186,7 +186,7 @@ impl StorageMap {
             // todo: what will happen if there is a StorageMapView holding a reference to this diff?
             // todo: consider `try_unwrap`
             if let Some(_diff) = self.diffs.remove(&block_number) {
-                tracing::debug!("Compacted diff for block {}", block_number);
+                tracing::trace!("Compacted diff for block {}", block_number);
             } else {
                 panic!("No diff found for block {block_number} while compacting");
             }

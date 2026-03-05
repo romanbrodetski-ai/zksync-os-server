@@ -39,7 +39,7 @@ impl ReadStorage for StorageMapView {
                     return Some(*value);
                 }
             } else {
-                tracing::debug!(
+                tracing::trace!(
                     "StorageMapView for {} (base block {}) read key: no diff found for block {}",
                     self.block,
                     self.base_block,

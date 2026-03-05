@@ -87,7 +87,7 @@ impl RepositoryManager {
                 .get_latest_block()
                 .saturating_sub(block_number) as usize;
             REPOSITORIES_METRICS.persistence_lag.set(persistence_lag);
-            tracing::info!(
+            tracing::debug!(
                 block_number,
                 ?persist_latency,
                 persistence_lag,

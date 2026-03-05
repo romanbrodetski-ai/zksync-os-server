@@ -71,7 +71,7 @@ impl<T: Clone> ProverJobMap<T> {
         while self.is_queue_full(&jobs) {
             let queue_statistics = self.compute_and_record_statistics(&jobs);
 
-            tracing::info!(
+            tracing::warn!(
                 batch_number,
                 ?queue_statistics,
                 ?self.prover_stage,
@@ -94,7 +94,7 @@ impl<T: Clone> ProverJobMap<T> {
 
         jobs.insert(batch_number, entry);
 
-        tracing::info!(
+        tracing::debug!(
             batch_number,
             queue_statistics = ?self.compute_and_record_statistics(&jobs),
             ?self.prover_stage,
@@ -166,7 +166,7 @@ impl<T: Clone> ProverJobMap<T> {
 
         let batch_stats = JobBatchStats::new(&selected_jobs);
         let queue_statistics = self.compute_and_record_statistics(&jobs);
-        tracing::info!(
+        tracing::debug!(
             ?batch_stats,
             ?queue_statistics,
             prover_id,
@@ -317,7 +317,7 @@ impl<T: Clone> ProverJobMap<T> {
         let metadata: Vec<JobMetadata> = completed.iter().map(|e| e.metadata.clone()).collect();
         let stats = JobBatchStats::new(&metadata);
 
-        tracing::info!(
+        tracing::debug!(
             ?stats,
             ?prover_type,
             prover_id,

@@ -123,7 +123,7 @@ impl NetworkService {
                 _phantom: Default::default(),
             })
             .build(client);
-        tracing::debug!(?net_cfg, "starting p2p network service");
+        tracing::info!(?net_cfg, "starting p2p network service");
         // Create network manager. We are not interested in `txpool` because transaction gossip is
         // disabled. `request_handler` is also unused as it is specific to `eth` protocol.
         let (network_manager, _txpool, _request_handler) =

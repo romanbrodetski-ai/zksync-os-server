@@ -57,7 +57,7 @@ fn extract_final_register_values(input_program_proof: execution_utils::ProgramPr
 
     let oracle_data =
         execution_utils::generate_oracle_data_from_metadata_and_proof_list(&metadata, &proof_list);
-    tracing::debug!(
+    tracing::trace!(
         "Oracle data iterator created with {} items",
         oracle_data.len()
     );
@@ -67,7 +67,7 @@ fn extract_final_register_values(input_program_proof: execution_utils::ProgramPr
     full_statement_verifier::verifier_common::prover::nd_source_std::set_iterator(it);
 
     // Assume that program proof has only recursion proofs.
-    tracing::debug!("Running continue recursive");
+    tracing::trace!("Running continue recursive");
     assert!(metadata.reduced_proof_count > 0);
 
     let final_register_values = full_statement_verifier::verify_recursion_layer();

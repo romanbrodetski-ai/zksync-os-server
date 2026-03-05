@@ -221,7 +221,7 @@ pub async fn find_l1_commit_block_by_batch_number(
     .await?;
     match last_l1_block_with_revert {
         Some(last_l1_block_with_revert) => {
-            tracing::info!(
+            tracing::debug!(
                 batch_number,
                 last_l1_block_with_revert,
                 "looking for batch commitment after last revert"
@@ -239,7 +239,7 @@ pub async fn find_l1_commit_block_by_batch_number(
                 is_batch_committed,
             )
             .await?;
-            tracing::info!(
+            tracing::debug!(
                 batch_number,
                 l1_block_with_commit,
                 "found non-reverted batch commitment on L1"
@@ -247,7 +247,7 @@ pub async fn find_l1_commit_block_by_batch_number(
             Ok(l1_block_with_commit)
         }
         None => {
-            tracing::info!(
+            tracing::debug!(
                 batch_number,
                 l1_block_with_commit,
                 "no batch reverts found on L1"

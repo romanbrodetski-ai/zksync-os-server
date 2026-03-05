@@ -153,7 +153,7 @@ impl ProofCommand {
         // todo: remove tostring
         let public_input = Self::snark_public_input(previous_batch_info, &stored_batch_infos);
 
-        tracing::info!(">> public input: {}", public_input);
+        tracing::debug!(">> public input: {}", public_input);
 
         let proof: Vec<U256> = match &self.proof {
             SnarkProof::Fake => {

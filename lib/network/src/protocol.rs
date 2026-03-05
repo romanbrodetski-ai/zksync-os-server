@@ -345,7 +345,7 @@ impl<P: AnyZksProtocolVersion, Replay: ReadReplay> Stream for ZksConnection<P, R
                     msg
                 }
                 Err(error) => {
-                    tracing::info!(%error, "error decoding peer message");
+                    tracing::warn!(%error, "error decoding peer message");
                     break;
                 }
             };
@@ -357,13 +357,13 @@ impl<P: AnyZksProtocolVersion, Replay: ReadReplay> Stream for ZksConnection<P, R
                     // with intention of terminating the connection.
                     this.state = match std::mem::replace(&mut this.state, State::Terminated) {
                         state @ State::WantsToRequest { .. } => {
-                            tracing::info!(
+                            tracing::debug!(
                                 "ignoring request as local node also wants to request records"
                             );
                             state
                         }
                         state @ State::WaitingForRecords { .. } => {
-                            tracing::info!(
+                            tracing::debug!(
                                 "ignoring request as local node is also waiting for records"
                             );
                             state
@@ -373,7 +373,7 @@ impl<P: AnyZksProtocolVersion, Replay: ReadReplay> Stream for ZksConnection<P, R
                                 .stream_from_forever(message.starting_block, HashMap::new()),
                         },
                         State::Responding { .. } => {
-                            tracing::info!(
+                            tracing::warn!(
                                 "received two `GetBlockReplays` requests from the same peer"
                             );
                             break;
@@ -394,7 +394,7 @@ impl<P: AnyZksProtocolVersion, Replay: ReadReplay> Stream for ZksConnection<P, R
                             next_block
                         }
                         _ => {
-                            tracing::info!("unrequested replay record received; terminating");
+                            tracing::warn!("unrequested replay record received; terminating");
                             break;
                         }
                     };
@@ -411,7 +411,7 @@ impl<P: AnyZksProtocolVersion, Replay: ReadReplay> Stream for ZksConnection<P, R
                     let record = match record.try_into() {
                         Ok(record) => record,
                         Err(error) => {
-                            tracing::info!(%error, "failed to recover replay block");
+                            tracing::warn!(%error, "failed to recover replay block");
                             break;
                         }
                     };

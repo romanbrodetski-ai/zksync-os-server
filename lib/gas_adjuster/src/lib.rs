@@ -123,7 +123,7 @@ impl GasAdjuster {
             if let Some(current_base_fee_per_gas) = fee_data.last().map(|fee| fee.base_fee_per_gas)
             {
                 if current_base_fee_per_gas > u64::MAX as u128 {
-                    tracing::info!(
+                    tracing::warn!(
                         "Failed to report current_base_fee_per_gas = {current_base_fee_per_gas}, it exceeds u64::MAX"
                     );
                 } else {
@@ -144,7 +144,7 @@ impl GasAdjuster {
                 fee_data.last().map(|fee| fee.base_fee_per_blob_gas)
             {
                 if current_blob_base_fee > u64::MAX as u128 {
-                    tracing::info!(
+                    tracing::warn!(
                         "Failed to report current_blob_base_fee = {current_blob_base_fee}, it exceeds u64::MAX"
                     );
                 } else {
@@ -165,7 +165,7 @@ impl GasAdjuster {
                 fee_data.last().and_then(|fee| fee.pubdata_price_per_byte)
             {
                 if current_pubdata_price_per_byte > U256::from(u64::MAX) {
-                    tracing::info!(
+                    tracing::warn!(
                         "Failed to report current_pubdata_price_per_byte = {current_pubdata_price_per_byte}, it exceeds u64::MAX"
                     );
                 } else {
