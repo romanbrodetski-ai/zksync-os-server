@@ -27,7 +27,7 @@ pub(crate) mod utils;
 pub mod vm_wrapper;
 
 pub use block_applier::BlockApplier;
-pub use block_canonizer::{BlockCanonizer, ConsensusInterface, LoopbackConsensus};
+pub use block_canonizer::{BlockCanonization, BlockCanonizer, NoopCanonization};
 /// Executes blocks, while only updating local in-memory state (mempool, block context).
 /// Does not persist anything to disk.
 /// Does not track the node role - reacts on the ordered inbound commands instead (`Produce` vs `Replay`)
@@ -81,6 +81,9 @@ where
             let Some(cmd) = input.recv().await else {
                 anyhow::bail!("inbound channel closed");
             };
+            tracing::debug!(
+                "Command {cmd} received by BlockExecutor"
+            );
             let cmd_type = cmd.command_type();
 
             // For Produce commands: check limit (will await indefinitely if limit reached) and increment counter
@@ -96,10 +99,6 @@ where
                 .await;
                 produced_blocks_count += 1;
             }
-            tracing::debug!(
-                cmd = cmd.to_string(),
-                "starting command. Turning into PreparedCommand.."
-            );
             latency_tracker.enter_state(SequencerState::BlockContextTxs);
 
             let prepared_command = self.block_context_provider.prepare_command(cmd).await?;
@@ -173,8 +172,6 @@ where
             {
                 anyhow::bail!("Outbound channel closed");
             }
-
-            tracing::debug!(block_number, "Block fully processed");
         }
     }
 }

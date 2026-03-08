@@ -19,7 +19,7 @@ use zksync_os_storage_api::ReplayRecord;
 /// it can handle both Produce and Replay upstream commands.
 pub struct BlockCanonizer<Consensus>
 where
-    Consensus: ConsensusInterface,
+    Consensus: BlockCanonization,
 {
     pub consensus: Consensus,
     /// Channel to send new canonized blocks to for the node to replay.
@@ -28,19 +28,26 @@ where
 }
 
 #[async_trait]
-pub trait ConsensusInterface: Send + 'static {
+pub trait BlockCanonization: Send + 'static {
     async fn propose(&self, record: ReplayRecord) -> anyhow::Result<()>;
     async fn next_canonized(&mut self) -> anyhow::Result<ReplayRecord>;
 }
 
 /// Degenerate consensus implementation - just an async channel to itself.
-pub struct LoopbackConsensus {
+pub struct NoopCanonization {
     pub sender: mpsc::Sender<ReplayRecord>,
     pub receiver: mpsc::Receiver<ReplayRecord>,
 }
 
+impl NoopCanonization {
+    pub fn new() -> Self {
+        let (sender, receiver) = mpsc::channel(1);
+        Self { sender, receiver }
+    }
+}
+
 #[async_trait]
-impl ConsensusInterface for LoopbackConsensus {
+impl BlockCanonization for NoopCanonization {
     async fn propose(&self, record: ReplayRecord) -> anyhow::Result<()> {
         self.sender.send(record).await?;
         Ok(())
@@ -57,7 +64,7 @@ impl ConsensusInterface for LoopbackConsensus {
 #[async_trait]
 impl<Consensus> PipelineComponent for BlockCanonizer<Consensus>
 where
-    Consensus: ConsensusInterface,
+    Consensus: BlockCanonization,
 {
     // Input from BlockExecutor
     type Input = (BlockOutput, ReplayRecord, BlockCommandType);
