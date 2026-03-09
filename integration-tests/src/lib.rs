@@ -596,6 +596,10 @@ impl MultiChainTesterBuilder {
             );
 
             chains.push(tester);
+
+            if i + 1 < num_chains {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
         }
 
         Ok(MultiChainTester { l1, chains })
