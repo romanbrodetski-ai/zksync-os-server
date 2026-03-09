@@ -245,7 +245,6 @@ async fn setup_token_on_chain_a(
 }
 
 /// Extracts the gateway chain block number from a log proof.
-/// Mirrors the JS `getGWBlockNumber(proof)` function (see `hashProof` in MessageHashing.sol).
 fn get_gw_block_number(proof: &[FixedBytes<32>]) -> u64 {
     let first = &proof[0];
     let gw_proof_index = 1 + first.0[1] as usize + 1 + first.0[2] as usize;
@@ -254,7 +253,6 @@ fn get_gw_block_number(proof: &[FixedBytes<32>]) -> u64 {
     u128::from_be_bytes(elem.0[0..16].try_into().unwrap()) as u64
 }
 
-/// Relayer functionality: wait for finalization and obtain message proof (UntilMsgRoot variant).
 async fn relayer_get_message_proof(
     provider: &impl ZksyncApi,
     tx_hash: FixedBytes<32>,
@@ -279,7 +277,6 @@ async fn relayer_get_message_proof(
         tokio::time::sleep(poll_interval).await;
     }
 
-    // Get the log proof using UntilMsgRoot, matching the JS tester behaviour
     let log_proof = loop {
         if start.elapsed() > timeout {
             anyhow::bail!("Log proof was not available in time");
@@ -421,7 +418,6 @@ async fn test_interop_l2_to_l1_message_verification() -> Result<()> {
     let log_proof =
         relayer_get_message_proof(&chain_a.l2_zk_provider, tx_hash, block_number).await?;
 
-    // Extract the gateway block number from the proof (mirrors JS getGWBlockNumber)
     let gw_block_number = get_gw_block_number(&log_proof.proof);
 
     // Wait for interop root to become available on chain B, keyed by gateway chain + GW block
@@ -564,7 +560,6 @@ async fn test_interop_bundle_send() -> Result<()> {
     )
     .await?;
 
-    // Extract the gateway block number from the proof (mirrors JS getGWBlockNumber)
     let gw_block_number = get_gw_block_number(&log_proof.proof);
 
     // Wait for interop root to get included on chain B, keyed by gateway chain + GW block

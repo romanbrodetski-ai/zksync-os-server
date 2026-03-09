@@ -158,14 +158,20 @@ impl<RpcStorage: ReadRpcStorage> ZksNamespace<RpcStorage> {
                             gw_local_root_future,
                             gw_chain_id_future,
                         )
-                        .map_ok(|(mut chain_log_proof, gw_local_root, gw_chain_id)| {
-                            // Chain tree is the right subtree of the aggregated tree.
-                            // We append root of the left subtree to form full proof.
-                            chain_log_proof.chain_id_leaf_proof_mask |=
-                                U256::from(1u64 << chain_log_proof.chain_id_leaf_proof.len());
-                            chain_log_proof.chain_id_leaf_proof.push(gw_local_root);
-                            chain_proof_vector(gateway_batch_number, chain_log_proof, gw_chain_id)
-                        });
+                        .map_ok(
+                            |(mut chain_log_proof, gw_local_root, gw_chain_id)| {
+                                // Chain tree is the right subtree of the aggregated tree.
+                                // We append root of the left subtree to form full proof.
+                                chain_log_proof.chain_id_leaf_proof_mask |=
+                                    U256::from(1u64 << chain_log_proof.chain_id_leaf_proof.len());
+                                chain_log_proof.chain_id_leaf_proof.push(gw_local_root);
+                                chain_proof_vector(
+                                    gateway_batch_number,
+                                    chain_log_proof,
+                                    gw_chain_id,
+                                )
+                            },
+                        );
 
                         let batch_tree_proof_future = batch_tree_proof(
                             gateway_batch.block_range.clone(),
