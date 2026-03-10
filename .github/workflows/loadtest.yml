@@ -104,6 +104,7 @@ jobs:
             --branch "${{ github.head_ref || github.ref_name }}" \
             --start-point main \
             --err \
+            --ci-only-thresholds \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
             --file "${LOADBASE_OUT_DIR}/bencher.json"
 
@@ -111,6 +112,7 @@ jobs:
         run: |
           SUMMARY_JSON="${LOADBASE_OUT_DIR}/summary.json"
           REPORT_MD="${LOADBASE_OUT_DIR}/report.md"
+          PR_COMMENT_MD="${LOADBASE_OUT_DIR}/pr-comment.md"
           if [ ! -f "${SUMMARY_JSON}" ]; then
             echo "summary.json is missing" >&2
             exit 1
@@ -124,18 +126,24 @@ jobs:
           RECEIPT_TIMEOUTS=$(jq -r '.summary.receipt_timeouts // 0' "${SUMMARY_JSON}")
           RECEIPT_ERRORS=$(jq -r '.summary.receipt_errors // 0' "${SUMMARY_JSON}")
 
+          cat > "${PR_COMMENT_MD}" <<EOF
+          ## Loadbase Benchmark
+
+          | Metric | Value |
+          |---|---:|
+          | Samples | ${SAMPLE_COUNT} |
+          | Median TPS10 | ${MEDIAN_TPS10} |
+          | P95 TPS10 | ${P95_TPS10} |
+          | Median include p50 10s (s) | ${MEDIAN_INC_P50} |
+          | Final included | ${FINAL_INCLUDED} |
+          | Receipt timeouts | ${RECEIPT_TIMEOUTS} |
+          | Receipt errors | ${RECEIPT_ERRORS} |
+
+          [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) · Full markdown report is available in the workflow artifacts.
+          EOF
+
           {
-            echo "## Loadbase Benchmark"
-            echo
-            echo "| Metric | Value |"
-            echo "|---|---:|"
-            echo "| Samples | ${SAMPLE_COUNT} |"
-            echo "| Median TPS10 | ${MEDIAN_TPS10} |"
-            echo "| P95 TPS10 | ${P95_TPS10} |"
-            echo "| Median include p50 10s (s) | ${MEDIAN_INC_P50} |"
-            echo "| Final included | ${FINAL_INCLUDED} |"
-            echo "| Receipt timeouts | ${RECEIPT_TIMEOUTS} |"
-            echo "| Receipt errors | ${RECEIPT_ERRORS} |"
+            cat "${PR_COMMENT_MD}"
             echo
             if [ -f "${REPORT_MD}" ]; then
               echo "<details><summary>Full report</summary>"
@@ -145,6 +153,13 @@ jobs:
               echo "</details>"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Update PR benchmark comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
+        with:
+          header: loadbase-benchmark
+          path: ${{ env.LOADBASE_OUT_DIR }}/pr-comment.md
 
       - name: Upload benchmark artifacts
         if: always() && !cancelled()
@@ -156,6 +171,7 @@ jobs:
             ${{ env.LOADBASE_LOGFILE }}
             ${{ env.LOADBASE_OUT_DIR }}/summary.json
             ${{ env.LOADBASE_OUT_DIR }}/report.md
+            ${{ env.LOADBASE_OUT_DIR }}/pr-comment.md
             ${{ env.LOADBASE_OUT_DIR }}/metrics.json
             ${{ env.LOADBASE_OUT_DIR }}/metrics.csv
             ${{ env.LOADBASE_OUT_DIR }}/bencher.json

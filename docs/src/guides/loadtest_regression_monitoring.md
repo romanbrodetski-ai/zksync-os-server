@@ -62,7 +62,7 @@ In CI:
 - `bencher.json` is uploaded to bencher.dev
 - all of the above are uploaded as GitHub artifacts for debugging and post-run inspection
 
-For the local usage guide and file format overview, see [loadbase/README.md](/Users/abalias/projects/matter-labs/zksync-os-server/loadbase/README.md).
+For the local usage guide and file format overview, see [loadbase/README.md](https://github.com/matter-labs/zksync-os-server/blob/main/loadbase/README.md).
 
 ## Bencher.dev Tracking
 
