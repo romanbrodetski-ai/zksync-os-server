@@ -349,8 +349,8 @@ impl Tester {
         })
         .retry(
             ConstantBuilder::default()
-                .with_delay(Duration::from_secs(1))
-                .with_max_times(10),
+                .with_delay(Duration::from_millis(200))
+                .with_max_times(50),
         )
         .notify(|err: &anyhow::Error, dur: Duration| {
             tracing::info!(%err, ?dur, "retrying connection to L2 node");
@@ -372,8 +372,8 @@ impl Tester {
             })
             .retry(
                 ConstantBuilder::default()
-                    .with_delay(Duration::from_secs(1))
-                    .with_max_times(10),
+                    .with_delay(Duration::from_millis(200))
+                    .with_max_times(50),
             )
             .notify(|err: &anyhow::Error, dur: Duration| {
                 tracing::info!(%err, ?dur, "waiting for L2 account to become rich");
@@ -415,6 +415,7 @@ pub struct TesterBuilder {
     block_time: Option<Duration>,
     batch_verification_threshold: Option<u64>,
     fee_config: Option<FeeConfig>,
+    gas_price_scale_factor: Option<f64>,
     estimate_gas_pubdata_price_factor: Option<f64>,
 }
 
@@ -440,6 +441,11 @@ impl TesterBuilder {
         self
     }
 
+    pub fn gas_price_scale_factor(mut self, factor: f64) -> Self {
+        self.gas_price_scale_factor = Some(factor);
+        self
+    }
+
     pub fn estimate_gas_pubdata_price_factor(mut self, factor: f64) -> Self {
         self.estimate_gas_pubdata_price_factor = Some(factor);
         self
@@ -461,6 +467,9 @@ impl TesterBuilder {
             }
             if let Some(fee_config) = self.fee_config.clone() {
                 config.fee_config = fee_config;
+            }
+            if let Some(factor) = self.gas_price_scale_factor {
+                config.rpc_config.gas_price_scale_factor = factor;
             }
             if let Some(factor) = self.estimate_gas_pubdata_price_factor {
                 config.rpc_config.estimate_gas_pubdata_price_factor = factor;
@@ -542,49 +551,55 @@ impl MultiChainTesterBuilder {
         })
         .await?;
 
-        // Launch L2 chains using chain configurations from config files
-        let mut chains = Vec::new();
+        // Launch L2 chains concurrently for faster setup
+        let mut futures = Vec::new();
         for i in 0..num_chains {
-            // Load the chain config to get the chain ID, operator keys, and contract addresses
-            let chain_config = load_chain_config(ChainLayout::MultiChain {
-                protocol_version: NEXT_PROTOCOL_VERSION,
-                chain_index: i,
+            let l1 = l1.clone();
+            futures.push(async move {
+                // Load the chain config to get the chain ID, operator keys, and contract addresses
+                let chain_config = load_chain_config(ChainLayout::MultiChain {
+                    protocol_version: NEXT_PROTOCOL_VERSION,
+                    chain_index: i,
+                });
+                let chain_id = chain_config
+                    .genesis_config
+                    .chain_id
+                    .expect("Chain ID must be set in chain config");
+                let l1_sender_config = chain_config.l1_sender_config.clone();
+                let bridgehub_address = chain_config.genesis_config.bridgehub_address;
+                let bytecode_supplier_address =
+                    chain_config.genesis_config.bytecode_supplier_address;
+
+                let chain_override = move |config: &mut Config| {
+                    config.genesis_config.chain_id = Some(chain_id);
+                    config.genesis_config.bridgehub_address = bridgehub_address;
+                    config.genesis_config.bytecode_supplier_address = bytecode_supplier_address;
+                    config.l1_sender_config = l1_sender_config.clone();
+                    // Use short block time for faster tests
+                    config.sequencer_config.block_time = Duration::from_millis(500);
+                };
+
+                let tester = Tester::launch_node(
+                    l1,
+                    false, // disable prover for faster tests
+                    Some(chain_override),
+                    None,
+                    NEXT_PROTOCOL_VERSION,
+                )
+                .await?;
+
+                tracing::info!(
+                    "L2 chain {} started with chain_id {} on {}",
+                    i,
+                    chain_id,
+                    tester.l2_rpc_address
+                );
+
+                anyhow::Ok(tester)
             });
-            let chain_id = chain_config
-                .genesis_config
-                .chain_id
-                .expect("Chain ID must be set in chain config");
-            let l1_sender_config = chain_config.l1_sender_config.clone();
-            let bridgehub_address = chain_config.genesis_config.bridgehub_address;
-            let bytecode_supplier_address = chain_config.genesis_config.bytecode_supplier_address;
-
-            let chain_override = move |config: &mut Config| {
-                config.genesis_config.chain_id = Some(chain_id);
-                config.genesis_config.bridgehub_address = bridgehub_address;
-                config.genesis_config.bytecode_supplier_address = bytecode_supplier_address;
-                config.l1_sender_config = l1_sender_config.clone();
-                // Use short block time for faster tests
-                config.sequencer_config.block_time = Duration::from_millis(500);
-            };
-
-            let tester = Tester::launch_node(
-                l1.clone(),
-                false, // disable prover for faster tests
-                Some(chain_override),
-                None,
-                NEXT_PROTOCOL_VERSION,
-            )
-            .await?;
-
-            tracing::info!(
-                "L2 chain {} started with chain_id {} on {}",
-                i,
-                chain_id,
-                tester.l2_rpc_address
-            );
-
-            chains.push(tester);
         }
+
+        let chains = futures::future::try_join_all(futures).await?;
 
         Ok(MultiChainTester { l1, chains })
     }
@@ -629,8 +644,8 @@ impl AnvilL1 {
         })
         .retry(
             ConstantBuilder::default()
-                .with_delay(Duration::from_secs(1))
-                .with_max_times(10),
+                .with_delay(Duration::from_millis(200))
+                .with_max_times(50),
         )
         .notify(|err: &anyhow::Error, dur: Duration| {
             tracing::info!(%err, ?dur, "retrying connection to L1 node");
