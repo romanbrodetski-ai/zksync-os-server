@@ -8,196 +8,193 @@ use futures::FutureExt;
 use std::time::Duration;
 use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::dyn_wallet_provider::EthWalletProvider;
-use zksync_os_integration_tests::integration_test_matrix;
+use zksync_os_integration_tests::{
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, Tester, test_casing,
+};
 use zksync_os_server::config::FeeConfig;
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    sensitive_to_balance_changes,
-    |case| async move {
-        let mut tester = case.setup().await?;
-        let alice = tester.l2_wallet.default_signer().address();
-        let bob_signer = PrivateKeySigner::random();
-        let bob = bob_signer.address();
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn sensitive_to_balance_changes(mut tester: Tester) -> anyhow::Result<()> {
+    let alice = tester.l2_wallet.default_signer().address();
+    let bob_signer = PrivateKeySigner::random();
+    let bob = bob_signer.address();
+    tester
+        .l2_provider
+        .wallet_mut()
+        .register_signer(bob_signer.clone());
+    assert_eq!(tester.l2_provider.get_balance(bob).await?, U256::ZERO);
+
+    let gas_price = tester.l2_provider.get_gas_price().await?;
+    let gas_limit = 100_000;
+    let value = U256::from(100);
+    let bob_tx = TransactionRequest::default()
+        .with_from(bob)
+        .with_to(Address::random())
+        .with_value(value)
+        .with_gas_price(gas_price)
+        .with_gas_limit(gas_limit)
+        .with_nonce(1);
+
+    let bob_tx_cost = U256::from(gas_limit) * U256::from(gas_price) + value;
+    let error = tester
+        .l2_provider
+        .send_transaction(bob_tx.clone())
+        .await
+        .expect_err("sending transaction should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("sender does not have enough funds")
+    );
+
+    tester
+        .l2_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(alice)
+                .with_to(bob)
+                .with_value(bob_tx_cost),
+        )
+        .await?
+        .expect_successful_receipt()
+        .await?;
+
+    let bob_receipt_fut = tester
+        .l2_provider
+        .send_transaction(bob_tx)
+        .await?
+        .expect_successful_receipt()
+        .map(|res| res.expect("transaction should be successful"))
+        .shared();
+
+    tester
+        .l2_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(bob)
+                .with_to(Address::random())
+                .with_value(value)
+                .with_gas_price(gas_price)
+                .with_gas_limit(gas_limit)
+                .with_nonce(0),
+        )
+        .await?
+        .expect_successful_receipt()
+        .await?;
+    tokio::time::timeout(std::time::Duration::from_secs(3), bob_receipt_fut.clone())
+        .await
+        .expect_err("transaction should timeout");
+
+    tester
+        .l2_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(alice)
+                .with_to(bob)
+                .with_value(bob_tx_cost),
+        )
+        .await?
+        .expect_successful_receipt()
+        .await?;
+    bob_receipt_fut.await;
+
+    Ok(())
+}
+
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_builder(|builder| {
+    let known_base_fee: u128 = 100_000_000;
+    let fee_config = FeeConfig {
+        native_price_usd: 3e-9,
+        base_fee_override: Some(U128::from(known_base_fee)),
+        native_per_gas: 100,
+        pubdata_price_override: Some(U128::from(1_000_000u64)),
+        native_price_override: Some(U128::from(1_000_000u64)),
+        pubdata_price_cap: None,
+    };
+    builder
+        .fee_config(fee_config)
+        .block_time(Duration::from_millis(500))
+})]
+#[test_log::test(tokio::test)]
+async fn low_fee_tx_does_not_hang_block_executor(mut tester: Tester) -> anyhow::Result<()> {
+    let known_base_fee: u128 = 100_000_000;
+
+    let alice = tester.l2_wallet.default_signer().address();
+    let chain_id = tester.l2_provider.get_chain_id().await?;
+
+    tester
+        .l2_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_to(Address::random())
+                .with_value(U256::from(1)),
+        )
+        .await?
+        .expect_successful_receipt()
+        .await?;
+
+    let bob_signer = PrivateKeySigner::random();
+    let bob = bob_signer.address();
+    tester.l2_provider.wallet_mut().register_signer(bob_signer);
+    tester
+        .l2_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(alice)
+                .with_to(bob)
+                .with_value(U256::from(10u64.pow(18))),
+        )
+        .await?
+        .expect_successful_receipt()
+        .await?;
+
+    let nonce = tester.l2_provider.get_transaction_count(alice).await?;
+    let poison_tx = TransactionRequest::default()
+        .with_to(Address::random())
+        .with_value(U256::from(1))
+        .with_nonce(nonce)
+        .with_gas_limit(21_000)
+        .with_max_fee_per_gas(7)
+        .with_max_priority_fee_per_gas(0)
+        .with_chain_id(chain_id);
+    let poison_envelope = poison_tx.build(&tester.l2_wallet).await?;
+    let poison_encoded = poison_envelope.encoded_2718();
+    let _ = tester
+        .l2_provider
+        .send_raw_transaction(&poison_encoded)
+        .await?;
+
+    let block_before_wait = tester.l2_provider.get_block_number().await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let block_after_wait = tester.l2_provider.get_block_number().await?;
+    assert_eq!(block_after_wait, block_before_wait);
+
+    let follow_up_tx = TransactionRequest::default()
+        .with_from(bob)
+        .with_to(Address::random())
+        .with_value(U256::from(1));
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
         tester
             .l2_provider
-            .wallet_mut()
-            .register_signer(bob_signer.clone());
-        assert_eq!(tester.l2_provider.get_balance(bob).await?, U256::ZERO);
-
-        let gas_price = tester.l2_provider.get_gas_price().await?;
-        let gas_limit = 100_000;
-        let value = U256::from(100);
-        let bob_tx = TransactionRequest::default()
-            .with_from(bob)
-            .with_to(Address::random())
-            .with_value(value)
-            .with_gas_price(gas_price)
-            .with_gas_limit(gas_limit)
-            .with_nonce(1);
-
-        let bob_tx_cost = U256::from(gas_limit) * U256::from(gas_price) + value;
-        let error = tester
-            .l2_provider
-            .send_transaction(bob_tx.clone())
+            .send_transaction(follow_up_tx)
+            .await?
+            .expect_successful_receipt()
             .await
-            .expect_err("sending transaction should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("sender does not have enough funds")
-        );
+    })
+    .await;
 
-        tester
-            .l2_provider
-            .send_transaction(
-                TransactionRequest::default()
-                    .with_from(alice)
-                    .with_to(bob)
-                    .with_value(bob_tx_cost),
-            )
-            .await?
-            .expect_successful_receipt()
-            .await?;
-
-        let bob_receipt_fut = tester
-            .l2_provider
-            .send_transaction(bob_tx)
-            .await?
-            .expect_successful_receipt()
-            .map(|res| res.expect("transaction should be successful"))
-            .shared();
-
-        tester
-            .l2_provider
-            .send_transaction(
-                TransactionRequest::default()
-                    .with_from(bob)
-                    .with_to(Address::random())
-                    .with_value(value)
-                    .with_gas_price(gas_price)
-                    .with_gas_limit(gas_limit)
-                    .with_nonce(0),
-            )
-            .await?
-            .expect_successful_receipt()
-            .await?;
-        tokio::time::timeout(std::time::Duration::from_secs(3), bob_receipt_fut.clone())
-            .await
-            .expect_err("transaction should timeout");
-
-        tester
-            .l2_provider
-            .send_transaction(
-                TransactionRequest::default()
-                    .with_from(alice)
-                    .with_to(bob)
-                    .with_value(bob_tx_cost),
-            )
-            .await?
-            .expect_successful_receipt()
-            .await?;
-        bob_receipt_fut.await;
-
-        Ok(())
-    }
-);
-
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    low_fee_tx_does_not_hang_block_executor,
-    |case| async move {
-        let known_base_fee: u128 = 100_000_000;
-        let fee_config = FeeConfig {
-            native_price_usd: 3e-9,
-            base_fee_override: Some(U128::from(known_base_fee)),
-            native_per_gas: 100,
-            pubdata_price_override: Some(U128::from(1_000_000u64)),
-            native_price_override: Some(U128::from(1_000_000u64)),
-            pubdata_price_cap: None,
-        };
-        let mut tester = case
-            .builder()
-            .fee_config(fee_config)
-            .block_time(Duration::from_millis(500))
-            .build()
-            .await?;
-
-        let alice = tester.l2_wallet.default_signer().address();
-        let chain_id = tester.l2_provider.get_chain_id().await?;
-
-        tester
-            .l2_provider
-            .send_transaction(
-                TransactionRequest::default()
-                    .with_to(Address::random())
-                    .with_value(U256::from(1)),
-            )
-            .await?
-            .expect_successful_receipt()
-            .await?;
-
-        let bob_signer = PrivateKeySigner::random();
-        let bob = bob_signer.address();
-        tester.l2_provider.wallet_mut().register_signer(bob_signer);
-        tester
-            .l2_provider
-            .send_transaction(
-                TransactionRequest::default()
-                    .with_from(alice)
-                    .with_to(bob)
-                    .with_value(U256::from(10u64.pow(18))),
-            )
-            .await?
-            .expect_successful_receipt()
-            .await?;
-
-        let nonce = tester.l2_provider.get_transaction_count(alice).await?;
-        let poison_tx = TransactionRequest::default()
-            .with_to(Address::random())
-            .with_value(U256::from(1))
-            .with_nonce(nonce)
-            .with_gas_limit(21_000)
-            .with_max_fee_per_gas(7)
-            .with_max_priority_fee_per_gas(0)
-            .with_chain_id(chain_id);
-        let poison_envelope = poison_tx.build(&tester.l2_wallet).await?;
-        let poison_encoded = poison_envelope.encoded_2718();
-        let _ = tester
-            .l2_provider
-            .send_raw_transaction(&poison_encoded)
-            .await?;
-
-        let block_before_wait = tester.l2_provider.get_block_number().await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let block_after_wait = tester.l2_provider.get_block_number().await?;
-        assert_eq!(block_after_wait, block_before_wait);
-
-        let follow_up_tx = TransactionRequest::default()
-            .with_from(bob)
-            .with_to(Address::random())
-            .with_value(U256::from(1));
-
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
-            tester
-                .l2_provider
-                .send_transaction(follow_up_tx)
-                .await?
-                .expect_successful_receipt()
-                .await
-        })
-        .await;
-
-        match result {
-            Ok(Ok(_receipt)) => {}
-            Ok(Err(e)) => panic!("Follow-up transaction failed unexpectedly: {e:#}"),
-            Err(_elapsed) => {
-                panic!(
-                    "Follow-up transaction not mined within 30s. The low-fee tx (maxFeePerGas=7, baseFee={known_base_fee}) appears to have stalled block production for other senders."
-                );
-            }
+    match result {
+        Ok(Ok(_receipt)) => {}
+        Ok(Err(e)) => panic!("Follow-up transaction failed unexpectedly: {e:#}"),
+        Err(_elapsed) => {
+            panic!(
+                "Follow-up transaction not mined within 30s. The low-fee tx (maxFeePerGas=7, baseFee={known_base_fee}) appears to have stalled block production for other senders."
+            );
         }
-
-        Ok(())
     }
-);
+
+    Ok(())
+}

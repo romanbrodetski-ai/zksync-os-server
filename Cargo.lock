@@ -13964,6 +13964,7 @@ dependencies = [
  "tracing",
  "zksync_os_api",
  "zksync_os_contract_interface",
+ "zksync_os_integration_tests_macros",
  "zksync_os_multivm",
  "zksync_os_network",
  "zksync_os_object_store",
@@ -13971,6 +13972,15 @@ dependencies = [
  "zksync_os_server",
  "zksync_os_state_full_diffs",
  "zksync_os_types",
+]
+
+[[package]]
+name = "zksync_os_integration_tests_macros"
+version = "0.16.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]

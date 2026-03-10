@@ -13,7 +13,9 @@ use std::collections::HashMap;
 use zksync_os_integration_tests::assert_traits::{ReceiptAssert, ReceiptsAssert};
 use zksync_os_integration_tests::contracts::{EventEmitter, TracingPrimary, TracingSecondary};
 use zksync_os_integration_tests::dyn_wallet_provider::EthDynProvider;
-use zksync_os_integration_tests::{Tester, integration_test_matrix};
+use zksync_os_integration_tests::{
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, Tester, test_casing,
+};
 
 fn check_call_frame(
     call_frame: CallFrame,
@@ -73,95 +75,91 @@ fn check_call_frame(
     );
 }
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    call_trace_transaction,
-    |case| async move {
-        // Test that the node can call trace an existing transaction. Manually asserts call trace output.
-        let tester = case.setup().await?;
-        let alice = tester.l2_wallet.default_signer().address();
-        // Init data for `TracingSecondary`
-        let secondary_data = U256::from(42);
-        // Call value for `TracingPrimary::calculate`
-        let calculate_value = U256::from(24);
-        // Expected result for `TracingPrimary::calculate`
-        let expected_value = secondary_data * calculate_value;
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn call_trace_transaction(tester: Tester) -> anyhow::Result<()> {
+    // Test that the node can call trace an existing transaction. Manually asserts call trace output.
+    let alice = tester.l2_wallet.default_signer().address();
+    // Init data for `TracingSecondary`
+    let secondary_data = U256::from(42);
+    // Call value for `TracingPrimary::calculate`
+    let calculate_value = U256::from(24);
+    // Expected result for `TracingPrimary::calculate`
+    let expected_value = secondary_data * calculate_value;
 
-        let secondary_contract =
-            TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
-        let primary_contract =
-            TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address())
-                .await?;
+    let secondary_contract =
+        TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
+    let primary_contract =
+        TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address()).await?;
 
-        let call_frame = primary_contract
-            .calculate(calculate_value)
-            .send()
-            .await?
-            .expect_call_trace()
-            .await?;
-        check_call_frame(
-            call_frame,
-            alice,
-            calculate_value,
-            expected_value,
-            *primary_contract.address(),
-            *secondary_contract.address(),
-        );
+    let call_frame = primary_contract
+        .calculate(calculate_value)
+        .send()
+        .await?
+        .expect_call_trace()
+        .await?;
+    check_call_frame(
+        call_frame,
+        alice,
+        calculate_value,
+        expected_value,
+        *primary_contract.address(),
+        *secondary_contract.address(),
+    );
 
-        let revert_call_frame = primary_contract
-            .shouldRevert()
-            // Set manual gas limit to avoid estimation failure
-            .gas(1_000_000)
-            .send()
-            .await?
-            .expect_call_trace()
-            .await?;
-        assert_eq!(
-            revert_call_frame,
-            CallFrame {
-                from: alice,
-                to: Some(*primary_contract.address()),
-                input: Bytes::from(TracingPrimary::shouldRevertCall::SELECTOR),
-                output: Some(Bytes::from(Revert::from("This should revert").abi_encode())),
-                error: Some("execution reverted".to_string()),
-                revert_reason: Some("This should revert".to_string()),
-                logs: vec![],
-                value: Some(U256::ZERO),
-                typ: "CALL".to_string(),
-                // Below is not asserted
-                gas: revert_call_frame.gas,
-                gas_used: revert_call_frame.gas_used,
-                calls: revert_call_frame.calls.clone(),
-            }
-        );
-        assert_eq!(
-            revert_call_frame.calls.len(),
-            1,
-            "expected exactly 1 subcall"
-        );
-        let revert_subcall = &revert_call_frame.calls[0];
-        assert_eq!(
-            revert_subcall,
-            &CallFrame {
-                from: *primary_contract.address(),
-                to: Some(*secondary_contract.address()),
-                input: Bytes::from(TracingSecondary::shouldRevertCall::SELECTOR),
-                output: Some(Bytes::from(Revert::from("This should revert").abi_encode())),
-                error: Some("execution reverted".to_string()),
-                revert_reason: Some("This should revert".to_string()),
-                logs: vec![],
-                value: None,
-                typ: "STATICCALL".to_string(),
-                calls: vec![],
-                // Below is not asserted
-                gas: revert_subcall.gas,
-                gas_used: revert_subcall.gas_used,
-            }
-        );
+    let revert_call_frame = primary_contract
+        .shouldRevert()
+        // Set manual gas limit to avoid estimation failure
+        .gas(1_000_000)
+        .send()
+        .await?
+        .expect_call_trace()
+        .await?;
+    assert_eq!(
+        revert_call_frame,
+        CallFrame {
+            from: alice,
+            to: Some(*primary_contract.address()),
+            input: Bytes::from(TracingPrimary::shouldRevertCall::SELECTOR),
+            output: Some(Bytes::from(Revert::from("This should revert").abi_encode())),
+            error: Some("execution reverted".to_string()),
+            revert_reason: Some("This should revert".to_string()),
+            logs: vec![],
+            value: Some(U256::ZERO),
+            typ: "CALL".to_string(),
+            // Below is not asserted
+            gas: revert_call_frame.gas,
+            gas_used: revert_call_frame.gas_used,
+            calls: revert_call_frame.calls.clone(),
+        }
+    );
+    assert_eq!(
+        revert_call_frame.calls.len(),
+        1,
+        "expected exactly 1 subcall"
+    );
+    let revert_subcall = &revert_call_frame.calls[0];
+    assert_eq!(
+        revert_subcall,
+        &CallFrame {
+            from: *primary_contract.address(),
+            to: Some(*secondary_contract.address()),
+            input: Bytes::from(TracingSecondary::shouldRevertCall::SELECTOR),
+            output: Some(Bytes::from(Revert::from("This should revert").abi_encode())),
+            error: Some("execution reverted".to_string()),
+            revert_reason: Some("This should revert".to_string()),
+            logs: vec![],
+            value: None,
+            typ: "STATICCALL".to_string(),
+            calls: vec![],
+            // Below is not asserted
+            gas: revert_subcall.gas,
+            gas_used: revert_subcall.gas_used,
+        }
+    );
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
 async fn check_tx_equivalency<
     Fut: Future<Output = anyhow::Result<PendingTransactionBuilder<Ethereum>>>,
@@ -270,189 +268,173 @@ fn strip_call_frame(call_frame: &CallFrame) -> CallFrame {
     call_frame
 }
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    call_trace_transaction_equivalency,
-    |case| async move {
-        // Test that the node call traces are equivalent to L1 traces (produced by anvil).
-        let tester = case.setup().await?;
-        // Init data for `TracingSecondary`
-        let secondary_data = U256::from(42);
-        // Call value for `TracingPrimary::multiCalculate`
-        let calculate_value = U256::from(24);
-        let times = U256::from(10);
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn call_trace_transaction_equivalency(tester: Tester) -> anyhow::Result<()> {
+    // Test that the node call traces are equivalent to L1 traces (produced by anvil).
+    // Init data for `TracingSecondary`
+    let secondary_data = U256::from(42);
+    // Call value for `TracingPrimary::multiCalculate`
+    let calculate_value = U256::from(24);
+    let times = U256::from(10);
 
-        check_tx_equivalency("multi-subcall", &tester, |provider| async move {
-            let secondary_contract =
-                TracingSecondary::deploy(provider.clone(), secondary_data).await?;
-            let primary_contract =
-                TracingPrimary::deploy(provider, *secondary_contract.address()).await?;
-            anyhow::Ok(
-                primary_contract
-                    .multiCalculate(calculate_value, times)
-                    .send()
-                    .await?,
-            )
-        })
-        .await?;
-
-        check_tx_equivalency("create", &tester, |provider| async move {
-            Ok(EventEmitter::deploy_builder(provider).send().await?)
-        })
-        .await?;
-
-        Ok(())
-    }
-);
-
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    call_trace_equivalency,
-    |case| async move {
-        // Test that the `debug_traceCall` output is equivalent to L1 output (as produced by anvil).
-        let tester = case.setup().await?;
-        // Init data for `TracingSecondary`
-        let secondary_data = U256::from(42);
-        // Call value for `TracingPrimary::multiCalculate`
-        let calculate_value = U256::from(24);
-        let times = U256::from(10);
-
-        check_call_equivalency("multi-subcall", &tester, |provider| async move {
-            let secondary_contract =
-                TracingSecondary::deploy(provider.clone(), secondary_data).await?;
-            let primary_contract =
-                TracingPrimary::deploy(provider, *secondary_contract.address()).await?;
-            anyhow::Ok(
-                primary_contract
-                    .multiCalculate(calculate_value, times)
-                    .into_transaction_request(),
-            )
-        })
-        .await?;
-
-        check_call_equivalency("create", &tester, |provider| async move {
-            Ok(EventEmitter::deploy_builder(provider).into_transaction_request())
-        })
-        .await?;
-
-        Ok(())
-    }
-);
-
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    call_trace_block,
-    |case| async move {
-        // Test that the node call traces are equivalent to L1 traces (produced by anvil).
-        let tester = case.setup().await?;
-        let alice = tester.l2_wallet.default_signer().address();
-        // Init data for `TracingSecondary`
-        let secondary_data = U256::from(42);
-        // Call values for `TracingPrimary::calculate`
-        let calculate_value0 = U256::from(24);
-        let calculate_value1 = U256::from(25);
-        // Expected results for `TracingPrimary::calculate`
-        let expected_value0 = secondary_data * calculate_value0;
-        let expected_value1 = secondary_data * calculate_value1;
-
-        let secondary_contract =
-            TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
+    check_tx_equivalency("multi-subcall", &tester, |provider| async move {
+        let secondary_contract = TracingSecondary::deploy(provider.clone(), secondary_data).await?;
         let primary_contract =
-            TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address())
-                .await?;
+            TracingPrimary::deploy(provider, *secondary_contract.address()).await?;
+        anyhow::Ok(
+            primary_contract
+                .multiCalculate(calculate_value, times)
+                .send()
+                .await?,
+        )
+    })
+    .await?;
 
-        loop {
-            let tx0 = primary_contract.calculate(calculate_value0).send().await?;
-            let tx1 = primary_contract.calculate(calculate_value1).send().await?;
+    check_tx_equivalency("create", &tester, |provider| async move {
+        Ok(EventEmitter::deploy_builder(provider).send().await?)
+    })
+    .await?;
 
-            let receipts = vec![tx0, tx1].expect_successful_receipts().await?;
-            if receipts[0].block_number.unwrap() != receipts[1].block_number.unwrap() {
-                tracing::info!("transactions got mined in different blocks, retrying");
-                continue;
-            }
-            let block_number = receipts[0].block_number.unwrap();
-            let traces = tester
-                .l2_provider
-                .debug_trace_block_by_number(
-                    block_number.into(),
-                    GethDebugTracingOptions::call_tracer(CallConfig::default()),
-                )
-                .await?;
+    Ok(())
+}
 
-            let call_frame0 = traces
-                .iter()
-                .find_map(|trace| {
-                    if trace.tx_hash() == Some(receipts[0].transaction_hash) {
-                        Some(
-                            trace
-                                .success()
-                                .unwrap()
-                                .clone()
-                                .try_into_call_frame()
-                                .unwrap(),
-                        )
-                    } else {
-                        None
-                    }
-                })
-                .expect("block traces did not contain trace for tx0");
-            check_call_frame(
-                call_frame0,
-                alice,
-                calculate_value0,
-                expected_value0,
-                *primary_contract.address(),
-                *secondary_contract.address(),
-            );
-            let call_frame1 = traces
-                .iter()
-                .find_map(|trace| {
-                    if trace.tx_hash() == Some(receipts[1].transaction_hash) {
-                        Some(
-                            trace
-                                .success()
-                                .unwrap()
-                                .clone()
-                                .try_into_call_frame()
-                                .unwrap(),
-                        )
-                    } else {
-                        None
-                    }
-                })
-                .expect("block traces did not contain trace for tx1");
-            check_call_frame(
-                call_frame1,
-                alice,
-                calculate_value1,
-                expected_value1,
-                *primary_contract.address(),
-                *secondary_contract.address(),
-            );
-            return Ok(());
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn call_trace_equivalency(tester: Tester) -> anyhow::Result<()> {
+    // Test that the `debug_traceCall` output is equivalent to L1 output (as produced by anvil).
+    // Init data for `TracingSecondary`
+    let secondary_data = U256::from(42);
+    // Call value for `TracingPrimary::multiCalculate`
+    let calculate_value = U256::from(24);
+    let times = U256::from(10);
+
+    check_call_equivalency("multi-subcall", &tester, |provider| async move {
+        let secondary_contract = TracingSecondary::deploy(provider.clone(), secondary_data).await?;
+        let primary_contract =
+            TracingPrimary::deploy(provider, *secondary_contract.address()).await?;
+        anyhow::Ok(
+            primary_contract
+                .multiCalculate(calculate_value, times)
+                .into_transaction_request(),
+        )
+    })
+    .await?;
+
+    check_call_equivalency("create", &tester, |provider| async move {
+        Ok(EventEmitter::deploy_builder(provider).into_transaction_request())
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn call_trace_block(tester: Tester) -> anyhow::Result<()> {
+    // Test that the node call traces are equivalent to L1 traces (produced by anvil).
+    let alice = tester.l2_wallet.default_signer().address();
+    // Init data for `TracingSecondary`
+    let secondary_data = U256::from(42);
+    // Call values for `TracingPrimary::calculate`
+    let calculate_value0 = U256::from(24);
+    let calculate_value1 = U256::from(25);
+    // Expected results for `TracingPrimary::calculate`
+    let expected_value0 = secondary_data * calculate_value0;
+    let expected_value1 = secondary_data * calculate_value1;
+
+    let secondary_contract =
+        TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
+    let primary_contract =
+        TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address()).await?;
+
+    loop {
+        let tx0 = primary_contract.calculate(calculate_value0).send().await?;
+        let tx1 = primary_contract.calculate(calculate_value1).send().await?;
+
+        let receipts = vec![tx0, tx1].expect_successful_receipts().await?;
+        if receipts[0].block_number.unwrap() != receipts[1].block_number.unwrap() {
+            tracing::info!("transactions got mined in different blocks, retrying");
+            continue;
         }
+        let block_number = receipts[0].block_number.unwrap();
+        let traces = tester
+            .l2_provider
+            .debug_trace_block_by_number(
+                block_number.into(),
+                GethDebugTracingOptions::call_tracer(CallConfig::default()),
+            )
+            .await?;
+
+        let call_frame0 = traces
+            .iter()
+            .find_map(|trace| {
+                if trace.tx_hash() == Some(receipts[0].transaction_hash) {
+                    Some(
+                        trace
+                            .success()
+                            .unwrap()
+                            .clone()
+                            .try_into_call_frame()
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .expect("block traces did not contain trace for tx0");
+        check_call_frame(
+            call_frame0,
+            alice,
+            calculate_value0,
+            expected_value0,
+            *primary_contract.address(),
+            *secondary_contract.address(),
+        );
+        let call_frame1 = traces
+            .iter()
+            .find_map(|trace| {
+                if trace.tx_hash() == Some(receipts[1].transaction_hash) {
+                    Some(
+                        trace
+                            .success()
+                            .unwrap()
+                            .clone()
+                            .try_into_call_frame()
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .expect("block traces did not contain trace for tx1");
+        check_call_frame(
+            call_frame1,
+            alice,
+            calculate_value1,
+            expected_value1,
+            *primary_contract.address(),
+            *secondary_contract.address(),
+        );
+        return Ok(());
     }
-);
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    debug_trace_call_js_tracer,
-    |case| async move {
-        let tester = case.setup().await?;
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn debug_trace_call_js_tracer(tester: Tester) -> anyhow::Result<()> {
+    let secondary_data = U256::from(7);
+    let calculate_value = U256::from(3);
+    let secondary_contract =
+        TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
+    let primary_contract =
+        TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address()).await?;
 
-        let secondary_data = U256::from(7);
-        let calculate_value = U256::from(3);
-        let secondary_contract =
-            TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
-        let primary_contract =
-            TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address())
-                .await?;
+    let mut call_request = primary_contract
+        .calculate(calculate_value)
+        .into_transaction_request();
 
-        let mut call_request = primary_contract
-            .calculate(calculate_value)
-            .into_transaction_request();
-
-        let js_str = r#"
+    let js_str = r#"
         {
            data: [],
            fault: function(log) {},
@@ -461,132 +443,122 @@ integration_test_matrix!(
            result: function(ctx, db) { return this.data; }
         }"#;
 
-        let mut opts = GethDebugTracingCallOptions::default();
-        opts.tracing_options.tracer = Some(GethDebugTracerType::JsTracer(js_str.to_string()));
-        call_request.max_priority_fee_per_gas = Some(1);
-        call_request.max_fee_per_gas = Some(u128::MAX);
-        call_request.set_from(tester.l2_wallet.default_signer().address());
+    let mut opts = GethDebugTracingCallOptions::default();
+    opts.tracing_options.tracer = Some(GethDebugTracerType::JsTracer(js_str.to_string()));
+    call_request.max_priority_fee_per_gas = Some(1);
+    call_request.max_fee_per_gas = Some(u128::MAX);
+    call_request.set_from(tester.l2_wallet.default_signer().address());
 
-        let trace = tester
-            .l2_provider
-            .debug_trace_call(call_request, BlockId::latest(), opts)
-            .await?;
+    let trace = tester
+        .l2_provider
+        .debug_trace_call(call_request, BlockId::latest(), opts)
+        .await?;
 
-        let addresses = match trace {
-            GethTrace::JS(value) => value
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
-                        .collect::<Vec<_>>()
-                })
-                .expect("tracer result missing addresses"),
-            other => panic!("expected JS trace result, got {other:?}"),
-        };
+    let addresses = match trace {
+        GethTrace::JS(value) => value
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                    .collect::<Vec<_>>()
+            })
+            .expect("tracer result missing addresses"),
+        other => panic!("expected JS trace result, got {other:?}"),
+    };
 
-        let expected_primary = format!("{:#x}", primary_contract.address()).to_lowercase();
-        let expected_secondary = format!("{:#x}", secondary_contract.address()).to_lowercase();
+    let expected_primary = format!("{:#x}", primary_contract.address()).to_lowercase();
+    let expected_secondary = format!("{:#x}", secondary_contract.address()).to_lowercase();
 
-        assert!(
-            addresses.iter().any(|addr| addr == &expected_primary),
-            "primary contract address not found in tracer output"
-        );
-        assert!(
-            addresses.iter().any(|addr| addr == &expected_secondary),
-            "secondary contract address not found in tracer output"
-        );
+    assert!(
+        addresses.iter().any(|addr| addr == &expected_primary),
+        "primary contract address not found in tracer output"
+    );
+    assert!(
+        addresses.iter().any(|addr| addr == &expected_secondary),
+        "secondary contract address not found in tracer output"
+    );
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    debug_trace_call_js_tracer_with_db,
-    |case| async move {
-        let tester = case.setup().await?;
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn debug_trace_call_js_tracer_with_db(tester: Tester) -> anyhow::Result<()> {
+    let secondary_data = U256::from(7);
+    let calculate_value = U256::from(3);
+    let secondary_contract =
+        TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
+    let primary_contract =
+        TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address()).await?;
 
-        let secondary_data = U256::from(7);
-        let calculate_value = U256::from(3);
-        let secondary_contract =
-            TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
-        let primary_contract =
-            TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address())
-                .await?;
+    let mut call_request = primary_contract
+        .calculate(calculate_value)
+        .into_transaction_request();
 
-        let mut call_request = primary_contract
-            .calculate(calculate_value)
-            .into_transaction_request();
-
-        let js_str = r#"
+    let js_str = r#"
         {
             data: [],
             write: function (log) { this.data.push([log.address, log.key, log.value]); },
             result: function(ctx, db) { let [address, key, value] = this.data[this.data.length-1]; return [db.getState(address, key), value]; }
         }"#;
 
-        let mut opts = GethDebugTracingCallOptions::default();
-        opts.tracing_options.tracer = Some(GethDebugTracerType::JsTracer(js_str.to_string()));
-        call_request.max_priority_fee_per_gas = Some(1);
-        call_request.max_fee_per_gas = Some(u128::MAX);
-        call_request.set_from(tester.l2_wallet.default_signer().address());
+    let mut opts = GethDebugTracingCallOptions::default();
+    opts.tracing_options.tracer = Some(GethDebugTracerType::JsTracer(js_str.to_string()));
+    call_request.max_priority_fee_per_gas = Some(1);
+    call_request.max_fee_per_gas = Some(u128::MAX);
+    call_request.set_from(tester.l2_wallet.default_signer().address());
 
-        let trace = tester
-            .l2_provider
-            .debug_trace_call(call_request, BlockId::latest(), opts)
-            .await?;
+    let trace = tester
+        .l2_provider
+        .debug_trace_call(call_request, BlockId::latest(), opts)
+        .await?;
 
-        let values = match trace {
-            GethTrace::JS(value) => value
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
-                        .collect::<Vec<_>>()
-                })
-                .expect("tracer result missing addresses"),
-            other => panic!("expected JS trace result, got {other:?}"),
-        };
+    let values = match trace {
+        GethTrace::JS(value) => value
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                    .collect::<Vec<_>>()
+            })
+            .expect("tracer result missing addresses"),
+        other => panic!("expected JS trace result, got {other:?}"),
+    };
 
-        assert_eq!(values.len(), 2, "expected exactly two values from tracer");
-        assert_eq!(
-            values[0], values[1],
-            "db.getState must return the same value as stored as a sanity check"
-        );
-        let res = secondary_data * calculate_value;
-        assert_eq!(
-            format!("{res:#x}").to_lowercase(),
-            format!(
-                "{:#x}",
-                u128::from_str_radix(values[0].trim_start_matches("0x"), 16)?
-            )
-            .to_lowercase(),
-            "stored value must match the expected one"
-        );
+    assert_eq!(values.len(), 2, "expected exactly two values from tracer");
+    assert_eq!(
+        values[0], values[1],
+        "db.getState must return the same value as stored as a sanity check"
+    );
+    let res = secondary_data * calculate_value;
+    assert_eq!(
+        format!("{res:#x}").to_lowercase(),
+        format!(
+            "{:#x}",
+            u128::from_str_radix(values[0].trim_start_matches("0x"), 16)?
+        )
+        .to_lowercase(),
+        "stored value must match the expected one"
+    );
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    debug_trace_call_stack,
-    |case| async move {
-        let tester = case.setup().await?;
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn debug_trace_call_stack(tester: Tester) -> anyhow::Result<()> {
+    let secondary_data = U256::from(7);
+    let calculate_value = U256::from(3);
+    let secondary_contract =
+        TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
+    let primary_contract =
+        TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address()).await?;
 
-        let secondary_data = U256::from(7);
-        let calculate_value = U256::from(3);
-        let secondary_contract =
-            TracingSecondary::deploy(tester.l2_provider.clone(), secondary_data).await?;
-        let primary_contract =
-            TracingPrimary::deploy(tester.l2_provider.clone(), *secondary_contract.address())
-                .await?;
+    let mut call_request = primary_contract
+        .calculate(calculate_value)
+        .into_transaction_request();
 
-        let mut call_request = primary_contract
-            .calculate(calculate_value)
-            .into_transaction_request();
-
-        let js_str = r#"
+    let js_str = r#"
         {
           setup: function () {
             this.logs = [];
@@ -621,48 +593,47 @@ integration_test_matrix!(
           }
         }"#;
 
-        let mut opts = GethDebugTracingCallOptions::default();
-        opts.tracing_options.tracer = Some(GethDebugTracerType::JsTracer(js_str.to_string()));
-        call_request.max_priority_fee_per_gas = Some(1);
-        call_request.max_fee_per_gas = Some(u128::MAX);
-        call_request.set_from(tester.l2_wallet.default_signer().address());
+    let mut opts = GethDebugTracingCallOptions::default();
+    opts.tracing_options.tracer = Some(GethDebugTracerType::JsTracer(js_str.to_string()));
+    call_request.max_priority_fee_per_gas = Some(1);
+    call_request.max_fee_per_gas = Some(u128::MAX);
+    call_request.set_from(tester.l2_wallet.default_signer().address());
 
-        let trace = tester
-            .l2_provider
-            .debug_trace_call(call_request, BlockId::latest(), opts)
-            .await?;
+    let trace = tester
+        .l2_provider
+        .debug_trace_call(call_request, BlockId::latest(), opts)
+        .await?;
 
-        let val = match trace {
-            GethTrace::JS(value) => value
-                .as_object()
-                .expect("tracer result missing addresses")
-                .get("logs")
-                .expect("geth tracer result missing data")
-                .as_array()
-                .expect("tracer logs is not an array")
-                .first()
-                .expect("tracer logs is empty")
-                .as_object()
-                .expect("tracer log entry is not an object")
-                .get("data")
-                .expect("tracer log entry missing data")
-                .as_str()
-                .expect("tracer log data is not a string")
-                .to_string(),
-            other => panic!("expected JS trace result, got {other:?}"),
-        };
+    let val = match trace {
+        GethTrace::JS(value) => value
+            .as_object()
+            .expect("tracer result missing addresses")
+            .get("logs")
+            .expect("geth tracer result missing data")
+            .as_array()
+            .expect("tracer logs is not an array")
+            .first()
+            .expect("tracer logs is empty")
+            .as_object()
+            .expect("tracer log entry is not an object")
+            .get("data")
+            .expect("tracer log entry missing data")
+            .as_str()
+            .expect("tracer log data is not a string")
+            .to_string(),
+        other => panic!("expected JS trace result, got {other:?}"),
+    };
 
-        let res = secondary_data * calculate_value;
-        assert_eq!(
-            format!("{res:#x}").to_lowercase(),
-            format!(
-                "{:#x}",
-                u128::from_str_radix(val.trim_start_matches("0x"), 16)?
-            )
-            .to_lowercase(),
-            "stored value must match the expected one"
-        );
+    let res = secondary_data * calculate_value;
+    assert_eq!(
+        format!("{res:#x}").to_lowercase(),
+        format!(
+            "{:#x}",
+            u128::from_str_radix(val.trim_start_matches("0x"), 16)?
+        )
+        .to_lowercase(),
+        "stored value must match the expected one"
+    );
 
-        Ok(())
-    }
-);
+    Ok(())
+}

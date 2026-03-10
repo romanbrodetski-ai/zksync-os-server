@@ -14,8 +14,8 @@ use zksync_os_contract_interface::Bridgehub;
 use zksync_os_contract_interface::IMailbox::NewPriorityRequest;
 use zksync_os_integration_tests::assert_traits::ProviderAssert;
 use zksync_os_integration_tests::{
-    GatewayTester, TestCase, Tester, assert_traits::ReceiptAssert, contracts::TestERC20,
-    interop_test_matrix, provider::ZksyncApi,
+    GatewayTester, NEXT_TO_GATEWAY, Tester, assert_traits::ReceiptAssert, contracts::TestERC20,
+    provider::ZksyncApi, test_casing,
 };
 use zksync_os_rpc_api::types::LogProofTarget;
 use zksync_os_types::{L1PriorityTxType, L1TxType, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE};
@@ -376,87 +376,83 @@ async fn fund_wallet_via_l1_deposit(tester: &Tester, wallet: Address, amount: U2
     Ok(())
 }
 
-interop_test_matrix!(
-    #[test_log::test(tokio::test)]
-    test_interop_l2_to_l1_message_verification,
-    |_case: TestCase| async move {
-        // 1. Send an L2->L1 message ("hello interop") on chain A
-        // 2. Wait for block finalization and obtain the log proof
-        // 3. Wait for the interop root to appear on chain B
-        // 4. Call proveL2MessageInclusionShared on chain B and assert it returns true
+#[test_casing([NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn test_interop_l2_to_l1_message_verification() -> anyhow::Result<()> {
+    // 1. Send an L2->L1 message ("hello interop") on chain A
+    // 2. Wait for block finalization and obtain the log proof
+    // 3. Wait for the interop root to appear on chain B
+    // 4. Call proveL2MessageInclusionShared on chain B and assert it returns true
 
-        let multi_chain = GatewayTester::setup(2).await?;
+    let multi_chain = GatewayTester::setup(2).await?;
 
-        let chain_a = multi_chain.chain_a();
-        let chain_b = multi_chain.chain_b();
-        let gateway = multi_chain.gateway();
+    let chain_a = multi_chain.chain_a();
+    let chain_b = multi_chain.chain_b();
+    let gateway = multi_chain.gateway();
 
-        let chain_a_id = chain_a.l2_provider.get_chain_id().await?;
-        let gw_chain_id = gateway.l2_provider.get_chain_id().await?;
-        let sender = chain_a.l2_wallet.default_signer().address();
+    let chain_a_id = chain_a.l2_provider.get_chain_id().await?;
+    let gw_chain_id = gateway.l2_provider.get_chain_id().await?;
+    let sender = chain_a.l2_wallet.default_signer().address();
 
-        // Fund sender on chain A
-        let deposit_amount = U256::from(100) * U256::from(10).pow(U256::from(18));
-        fund_wallet_via_l1_deposit(chain_a, sender, deposit_amount).await?;
+    // Fund sender on chain A
+    let deposit_amount = U256::from(100) * U256::from(10).pow(U256::from(18));
+    fund_wallet_via_l1_deposit(chain_a, sender, deposit_amount).await?;
 
-        // Send L2 -> L1 message via IL1Messenger
-        let messenger = IL1Messenger::new(L1_MESSENGER_ADDRESS, &chain_a.l2_provider);
-        let message_data = Bytes::from(b"hello interop".to_vec());
+    // Send L2 -> L1 message via IL1Messenger
+    let messenger = IL1Messenger::new(L1_MESSENGER_ADDRESS, &chain_a.l2_provider);
+    let message_data = Bytes::from(b"hello interop".to_vec());
 
-        let receipt = messenger
-            .sendToL1(message_data.clone())
-            .gas(100_000)
-            .max_fee_per_gas(1_000_000_000)
-            .max_priority_fee_per_gas(0)
-            .send()
-            .await?
-            .expect_successful_receipt()
-            .await?;
+    let receipt = messenger
+        .sendToL1(message_data.clone())
+        .gas(100_000)
+        .max_fee_per_gas(1_000_000_000)
+        .max_priority_fee_per_gas(0)
+        .send()
+        .await?
+        .expect_successful_receipt()
+        .await?;
 
-        let block_number = receipt.block_number.expect("Block number not found");
-        let tx_hash = receipt.transaction_hash;
+    let block_number = receipt.block_number.expect("Block number not found");
+    let tx_hash = receipt.transaction_hash;
 
-        // Wait for block finalization and get the L2->L1 log proof (MessageRoot variant)
-        let log_proof =
-            relayer_get_message_proof(&chain_a.l2_zk_provider, tx_hash, block_number).await?;
+    // Wait for block finalization and get the L2->L1 log proof (MessageRoot variant)
+    let log_proof =
+        relayer_get_message_proof(&chain_a.l2_zk_provider, tx_hash, block_number).await?;
 
-        let gw_block_number = get_gw_block_number(&log_proof.proof);
+    let gw_block_number = get_gw_block_number(&log_proof.proof);
 
-        // Wait for interop root to become available on chain B, keyed by gateway chain + GW block
-        chain_b
-            .l2_provider
-            .expect_interop_root_inclusion(gw_chain_id, gw_block_number)
-            .await?;
+    // Wait for interop root to become available on chain B, keyed by gateway chain + GW block
+    chain_b
+        .l2_provider
+        .expect_interop_root_inclusion(gw_chain_id, gw_block_number)
+        .await?;
 
-        // Verify message inclusion on chain B
-        let verifier =
-            IMessageVerification::new(L2_MESSAGE_VERIFICATION_ADDRESS, &chain_b.l2_provider);
+    // Verify message inclusion on chain B
+    let verifier = IMessageVerification::new(L2_MESSAGE_VERIFICATION_ADDRESS, &chain_b.l2_provider);
 
-        let included = verifier
-            .proveL2MessageInclusionShared(
-                U256::from(chain_a_id),
-                U256::from(log_proof.batch_number),
-                U256::from(log_proof.id),
-                IMessageVerification::L2Message {
-                    txNumberInBatch: receipt
-                        .transaction_index
-                        .expect("Transaction index not found")
-                        as u16,
-                    sender,
-                    data: message_data,
-                },
-                log_proof.proof.clone(),
-            )
-            .call()
-            .await?;
+    let included = verifier
+        .proveL2MessageInclusionShared(
+            U256::from(chain_a_id),
+            U256::from(log_proof.batch_number),
+            U256::from(log_proof.id),
+            IMessageVerification::L2Message {
+                txNumberInBatch: receipt
+                    .transaction_index
+                    .expect("Transaction index not found") as u16,
+                sender,
+                data: message_data,
+            },
+            log_proof.proof.clone(),
+        )
+        .call()
+        .await?;
 
-        assert!(included, "Message was NOT included in the interop proof");
+    assert!(included, "Message was NOT included in the interop proof");
 
-        tracing::info!("✅ Interop L2->L1 message verification successful");
+    tracing::info!("✅ Interop L2->L1 message verification successful");
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
 #[test_log::test(tokio::test)]
 #[ignore = "temporarily disabled"]

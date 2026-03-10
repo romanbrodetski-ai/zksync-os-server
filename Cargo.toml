@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "integration-tests-macros",
     "lib/contract_interface",
     "lib/crypto",
     "lib/genesis",

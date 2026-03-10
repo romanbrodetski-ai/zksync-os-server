@@ -8,117 +8,109 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolValue;
 use zksync_os_contract_interface::Bridgehub;
 use zksync_os_contract_interface::IMailbox::NewPriorityRequest;
-use zksync_os_integration_tests::Tester;
 use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::contracts::TestERC20::TestERC20Instance;
 use zksync_os_integration_tests::contracts::{IL2AssetRouter, L1AssetRouter, TestERC20};
 use zksync_os_integration_tests::dyn_wallet_provider::EthDynProvider;
-use zksync_os_integration_tests::integration_test_matrix;
 use zksync_os_integration_tests::provider::ZksyncApi;
+use zksync_os_integration_tests::{
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, Tester, test_casing,
+};
 use zksync_os_types::{L2ToL1Log, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE, ZkTxType};
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    erc20_deposit,
-    |case| async move {
-        let tester = case.setup().await?;
-        let alice = tester.l1_wallet().default_signer().address();
-        let mint_amount = U256::from(100u64);
-        let deposit_amount = U256::from(40u64);
-        let l1_erc20 = deploy_l1_token_and_mint(&tester, mint_amount).await?;
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn erc20_deposit(tester: Tester) -> anyhow::Result<()> {
+    let alice = tester.l1_wallet().default_signer().address();
+    let mint_amount = U256::from(100u64);
+    let deposit_amount = U256::from(40u64);
+    let l1_erc20 = deploy_l1_token_and_mint(&tester, mint_amount).await?;
 
-        assert_eq!(l1_erc20.balanceOf(alice).call().await?, mint_amount);
+    assert_eq!(l1_erc20.balanceOf(alice).call().await?, mint_amount);
 
-        let l1_deposit_receipt = deposit_erc20(&tester, &l1_erc20, alice, deposit_amount).await?;
-        assert_successful_deposit_l2_part(&tester, l1_deposit_receipt).await?;
+    let l1_deposit_receipt = deposit_erc20(&tester, &l1_erc20, alice, deposit_amount).await?;
+    assert_successful_deposit_l2_part(&tester, l1_deposit_receipt).await?;
 
-        let l2_erc20_address = l2_token_address(&tester, *l1_erc20.address()).await?;
-        let l2_erc20 = TestERC20::new(l2_erc20_address, tester.l2_provider.clone());
-        let l2_balance = l2_erc20.balanceOf(alice).call().await?;
-        assert_eq!(l2_balance, deposit_amount);
+    let l2_erc20_address = l2_token_address(&tester, *l1_erc20.address()).await?;
+    let l2_erc20 = TestERC20::new(l2_erc20_address, tester.l2_provider.clone());
+    let l2_balance = l2_erc20.balanceOf(alice).call().await?;
+    assert_eq!(l2_balance, deposit_amount);
 
-        let l1_balance = l1_erc20.balanceOf(alice).call().await?;
-        assert_eq!(l1_balance, mint_amount - deposit_amount);
+    let l1_balance = l1_erc20.balanceOf(alice).call().await?;
+    assert_eq!(l1_balance, mint_amount - deposit_amount);
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    erc20_transfer,
-    |case| async move {
-        let tester = case.setup().await?;
-        let alice = tester.l2_wallet.default_signer().address();
-        let bob_signer = PrivateKeySigner::random();
-        let bob = bob_signer.address();
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn erc20_transfer(tester: Tester) -> anyhow::Result<()> {
+    let alice = tester.l2_wallet.default_signer().address();
+    let bob_signer = PrivateKeySigner::random();
+    let bob = bob_signer.address();
 
-        let mint_amount = U256::from(100u64);
-        let l1_erc20 = deploy_l1_token_and_mint(&tester, mint_amount).await?;
-        let l1_deposit_receipt = deposit_erc20(&tester, &l1_erc20, alice, mint_amount).await?;
-        assert_successful_deposit_l2_part(&tester, l1_deposit_receipt).await?;
+    let mint_amount = U256::from(100u64);
+    let l1_erc20 = deploy_l1_token_and_mint(&tester, mint_amount).await?;
+    let l1_deposit_receipt = deposit_erc20(&tester, &l1_erc20, alice, mint_amount).await?;
+    assert_successful_deposit_l2_part(&tester, l1_deposit_receipt).await?;
 
-        let l2_erc20_address = l2_token_address(&tester, *l1_erc20.address()).await?;
-        let l2_erc20 = TestERC20::new(l2_erc20_address, tester.l2_provider.clone());
+    let l2_erc20_address = l2_token_address(&tester, *l1_erc20.address()).await?;
+    let l2_erc20 = TestERC20::new(l2_erc20_address, tester.l2_provider.clone());
 
-        let transfer_amount = U256::from(40u64);
-        l2_erc20
-            .transfer(bob, transfer_amount)
-            .from(alice)
-            .send()
-            .await?
-            .expect_successful_receipt()
-            .await?;
+    let transfer_amount = U256::from(40u64);
+    l2_erc20
+        .transfer(bob, transfer_amount)
+        .from(alice)
+        .send()
+        .await?
+        .expect_successful_receipt()
+        .await?;
 
-        let alice_l2_balance = l2_erc20.balanceOf(alice).call().await?;
-        let bob_l2_balance = l2_erc20.balanceOf(bob).call().await?;
+    let alice_l2_balance = l2_erc20.balanceOf(alice).call().await?;
+    let bob_l2_balance = l2_erc20.balanceOf(bob).call().await?;
 
-        assert_eq!(alice_l2_balance, mint_amount - transfer_amount);
-        assert_eq!(bob_l2_balance, transfer_amount);
+    assert_eq!(alice_l2_balance, mint_amount - transfer_amount);
+    assert_eq!(bob_l2_balance, transfer_amount);
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    erc20_withdrawal,
-    |case| async move {
-        let tester = case.setup().await?;
-        let alice = tester.l2_wallet.default_signer().address();
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn erc20_withdrawal(tester: Tester) -> anyhow::Result<()> {
+    let alice = tester.l2_wallet.default_signer().address();
 
-        let mint_amount = U256::from(100u64);
-        let l1_erc20 = deploy_l1_token_and_mint(&tester, mint_amount).await?;
-        let l1_deposit_receipt = deposit_erc20(&tester, &l1_erc20, alice, mint_amount).await?;
-        assert_successful_deposit_l2_part(&tester, l1_deposit_receipt).await?;
+    let mint_amount = U256::from(100u64);
+    let l1_erc20 = deploy_l1_token_and_mint(&tester, mint_amount).await?;
+    let l1_deposit_receipt = deposit_erc20(&tester, &l1_erc20, alice, mint_amount).await?;
+    assert_successful_deposit_l2_part(&tester, l1_deposit_receipt).await?;
 
-        let l2_erc20_address = l2_token_address(&tester, *l1_erc20.address()).await?;
-        let l2_erc20 = TestERC20::new(l2_erc20_address, tester.l2_provider.clone());
-        let l2_asset_router_address = address!("0x0000000000000000000000000000000000010003");
-        let l2_asset_router =
-            IL2AssetRouter::new(l2_asset_router_address, tester.l2_zk_provider.clone());
+    let l2_erc20_address = l2_token_address(&tester, *l1_erc20.address()).await?;
+    let l2_erc20 = TestERC20::new(l2_erc20_address, tester.l2_provider.clone());
+    let l2_asset_router_address = address!("0x0000000000000000000000000000000000010003");
+    let l2_asset_router =
+        IL2AssetRouter::new(l2_asset_router_address, tester.l2_zk_provider.clone());
 
-        let withdraw_amount = U256::from(40u64);
-        let l2_receipt = l2_asset_router
-            .withdraw(alice, l2_erc20_address, withdraw_amount)
-            .send()
-            .await?
-            .expect_to_execute()
-            .await?;
-        let l1_asset_router =
-            L1AssetRouter::new(tester.l1_provider().clone(), tester.l2_zk_provider.clone()).await?;
-        let l1_nullifier = l1_asset_router.l1_nullifier().await?;
-        l1_nullifier.finalize_withdrawal(l2_receipt).await?;
+    let withdraw_amount = U256::from(40u64);
+    let l2_receipt = l2_asset_router
+        .withdraw(alice, l2_erc20_address, withdraw_amount)
+        .send()
+        .await?
+        .expect_to_execute()
+        .await?;
+    let l1_asset_router =
+        L1AssetRouter::new(tester.l1_provider().clone(), tester.l2_zk_provider.clone()).await?;
+    let l1_nullifier = l1_asset_router.l1_nullifier().await?;
+    l1_nullifier.finalize_withdrawal(l2_receipt).await?;
 
-        let l1_balance = l1_erc20.balanceOf(alice).call().await?;
-        let l2_balance = l2_erc20.balanceOf(alice).call().await?;
+    let l1_balance = l1_erc20.balanceOf(alice).call().await?;
+    let l2_balance = l2_erc20.balanceOf(alice).call().await?;
 
-        assert_eq!(l1_balance, withdraw_amount);
-        assert_eq!(l2_balance, mint_amount - withdraw_amount);
+    assert_eq!(l1_balance, withdraw_amount);
+    assert_eq!(l2_balance, mint_amount - withdraw_amount);
 
-        Ok(())
-    }
-);
+    Ok(())
+}
 
 async fn deploy_l1_token_and_mint(
     tester: &Tester,

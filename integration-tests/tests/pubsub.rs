@@ -12,7 +12,9 @@ use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::contracts::EventEmitter;
 use zksync_os_integration_tests::contracts::EventEmitter::{EventEmitterInstance, TestEvent};
 use zksync_os_integration_tests::dyn_wallet_provider::EthDynProvider;
-use zksync_os_integration_tests::{TestCase, Tester, integration_test_matrix};
+use zksync_os_integration_tests::{
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, Tester, test_casing,
+};
 
 trait PubsubSuite: Sized {
     type Expected: RpcRecv + PartialEq;
@@ -21,8 +23,7 @@ trait PubsubSuite: Sized {
     async fn prepare_expected(&self, tester: &Tester) -> anyhow::Result<Self::Expected>;
 }
 
-async fn run_test<S: PubsubSuite>(case: TestCase) -> anyhow::Result<()> {
-    let tester = case.setup().await?;
+async fn run_test<S: PubsubSuite>(tester: Tester) -> anyhow::Result<()> {
     let suite = S::init(&tester).await?;
     let mut stream = suite.subscribe(&tester).await?.into_stream();
     let expected_item = suite.prepare_expected(&tester).await?;
@@ -181,26 +182,26 @@ impl PubsubSuite for NewLogsSuite {
     }
 }
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    new_block_pubsub,
-    |case| async move { run_test::<NewBlockSuite>(case).await }
-);
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn new_block_pubsub(tester: Tester) -> anyhow::Result<()> {
+    run_test::<NewBlockSuite>(tester).await
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    pending_tx_hash_pubsub,
-    |case| async move { run_test::<PendingTxSuite<false>>(case).await }
-);
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn pending_tx_hash_pubsub(tester: Tester) -> anyhow::Result<()> {
+    run_test::<PendingTxSuite<false>>(tester).await
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    pending_tx_full_pubsub,
-    |case| async move { run_test::<PendingTxSuite<true>>(case).await }
-);
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn pending_tx_full_pubsub(tester: Tester) -> anyhow::Result<()> {
+    run_test::<PendingTxSuite<true>>(tester).await
+}
 
-integration_test_matrix!(
-    #[test_log::test(tokio::test)]
-    new_log_pubsub,
-    |case| async move { run_test::<NewLogsSuite>(case).await }
-);
+#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_log::test(tokio::test)]
+async fn new_log_pubsub(tester: Tester) -> anyhow::Result<()> {
+    run_test::<NewLogsSuite>(tester).await
+}

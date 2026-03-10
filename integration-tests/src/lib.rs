@@ -65,6 +65,8 @@ pub enum SettlementLayer {
     Gateway,
 }
 
+pub use zksync_os_integration_tests_macros::test_casing;
+
 #[derive(Debug, Clone, Copy)]
 pub struct TestCase {
     pub protocol_version: &'static str,
@@ -103,6 +105,13 @@ impl TestCase {
         self.builder().build().await
     }
 }
+
+pub const CURRENT_TO_L1: TestCase = TestCase::current_to_l1();
+pub const NEXT_TO_L1: TestCase = TestCase::next_to_l1();
+pub const NEXT_TO_GATEWAY: TestCase = TestCase::next_to_gateway();
+pub const V30_L1: TestCase = CURRENT_TO_L1;
+pub const V31_L1: TestCase = NEXT_TO_L1;
+pub const V31_GATEWAY: TestCase = NEXT_TO_GATEWAY;
 
 #[macro_export]
 macro_rules! integration_test_matrix {
@@ -632,6 +641,7 @@ impl NodeBuilderOptions {
     }
 }
 
+#[derive(Clone)]
 pub struct TesterBuilder {
     options: NodeBuilderOptions,
     protocol_version: &'static str,
