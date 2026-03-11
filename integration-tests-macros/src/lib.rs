@@ -88,7 +88,7 @@ pub fn test_casing(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as ItemFn);
 
     if input.sig.asyncness.is_none() {
-        return syn::Error::new_spanned(&input.sig.fn_token, "test function must be async")
+        return syn::Error::new_spanned(input.sig.fn_token, "test function must be async")
             .into_compile_error()
             .into();
     }

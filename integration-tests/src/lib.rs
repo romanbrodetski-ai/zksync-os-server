@@ -37,7 +37,7 @@ use zksync_os_contract_interface::IMailbox::NewPriorityRequest;
 use zksync_os_network::NodeRecord;
 use zksync_os_server::config::{
     BatchVerificationConfig, Config, FakeFriProversConfig, FakeSnarkProversConfig, FeeConfig,
-    NetworkConfig, ProverApiConfig, RpcConfig, StatusServerConfig,
+    NetworkConfig, ProofStorageConfig, ProverApiConfig, RpcConfig, StatusServerConfig,
 };
 use zksync_os_server::default_protocol_version::{NEXT_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use zksync_os_state_full_diffs::FullDiffsState;
@@ -203,6 +203,7 @@ pub struct Tester {
 
     #[allow(dead_code)]
     tempdir: Arc<tempfile::TempDir>,
+    main_node_tempdir: Arc<tempfile::TempDir>,
 
     // Needed to be able to connect external nodes
     node_record: NodeRecord,
@@ -335,16 +336,13 @@ impl Tester {
                 ..config.prover_api_config.fake_snark_provers
             },
             address: prover_api_address,
-            object_store: ObjectStoreConfig {
-                mode: ObjectStoreMode::FileBacked {
-                    file_backed_base_path: main_node_tempdir
-                        .as_ref()
-                        .map(|t| t.path())
-                        .unwrap_or(tempdir.path())
-                        .join("object_store"),
-                },
-                max_retries: 1,
-                local_mirror_path: None,
+            proof_storage: ProofStorageConfig {
+                path: main_node_tempdir
+                    .as_ref()
+                    .map(|t| t.path())
+                    .unwrap_or(tempdir.path())
+                    .join("fri_proofs"),
+                ..ProofStorageConfig::default()
             },
             ..config.prover_api_config
         };
@@ -487,9 +485,7 @@ impl Tester {
 fn enable_ephemeral_mode_for_tests(tempdir_path: &Path, config: &mut Config) {
     let rocks_db_path = tempdir_path.join("node");
     config.general_config.rocks_db_path = rocks_db_path.clone();
-    config.prover_api_config.object_store.mode = ObjectStoreMode::FileBacked {
-        file_backed_base_path: tempdir_path.join("shared"),
-    };
+    config.prover_api_config.proof_storage.path = tempdir_path.join("shared");
     config.prover_api_config.enabled = false;
     config.status_server_config.enabled = false;
 
