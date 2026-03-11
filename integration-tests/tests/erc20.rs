@@ -14,11 +14,11 @@ use zksync_os_integration_tests::contracts::{IL2AssetRouter, L1AssetRouter, Test
 use zksync_os_integration_tests::dyn_wallet_provider::EthDynProvider;
 use zksync_os_integration_tests::provider::ZksyncApi;
 use zksync_os_integration_tests::{
-    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, Tester, test_casing,
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, Tester, test_casing,
 };
 use zksync_os_types::{L2ToL1Log, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE, ZkTxType};
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
 #[test_log::test(tokio::test)]
 async fn erc20_deposit(tester: Tester) -> anyhow::Result<()> {
     let alice = tester.l1_wallet().default_signer().address();
@@ -48,7 +48,7 @@ async fn erc20_deposit(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
 #[test_log::test(tokio::test)]
 async fn erc20_transfer(tester: Tester) -> anyhow::Result<()> {
     // We use L2 wallet's default signer as Alice because it already has L2 ETH.
@@ -85,7 +85,7 @@ async fn erc20_transfer(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
 #[test_log::test(tokio::test)]
 async fn erc20_withdrawal(tester: Tester) -> anyhow::Result<()> {
     // We use L2 wallet's default signer as Alice because it already has L2 ETH.

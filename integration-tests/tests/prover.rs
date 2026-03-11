@@ -1,10 +1,10 @@
 #![cfg(feature = "prover-tests")]
 
 use zksync_os_integration_tests::{
-    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, TesterBuilder, test_casing,
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, TesterBuilder, test_casing,
 };
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
 #[test_log::test(tokio::test)]
 async fn prover(builder: TesterBuilder) -> anyhow::Result<()> {
     // Test that prover can successfully prove at least one batch

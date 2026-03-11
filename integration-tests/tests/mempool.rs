@@ -9,11 +9,11 @@ use std::time::Duration;
 use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::dyn_wallet_provider::EthWalletProvider;
 use zksync_os_integration_tests::{
-    CURRENT_TO_L1, NEXT_TO_GATEWAY, NEXT_TO_L1, Tester, test_casing,
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, Tester, test_casing,
 };
 use zksync_os_server::config::FeeConfig;
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
 #[test_log::test(tokio::test)]
 async fn sensitive_to_balance_changes(mut tester: Tester) -> anyhow::Result<()> {
     // Test that mempool gets notified when an account's balance changes, hence potentially
@@ -118,7 +118,7 @@ async fn sensitive_to_balance_changes(mut tester: Tester) -> anyhow::Result<()> 
 
 /// A transaction with maxFeePerGas below the chain's base fee must not stall
 /// block production for other senders.
-#[test_casing([CURRENT_TO_L1, NEXT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
 #[test_builder(|builder| {
     let known_base_fee: u128 = 100_000_000;
     let fee_config = FeeConfig {

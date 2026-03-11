@@ -35,7 +35,6 @@ use tokio::task::JoinHandle;
 use zksync_os_contract_interface::Bridgehub;
 use zksync_os_contract_interface::IMailbox::NewPriorityRequest;
 use zksync_os_network::NodeRecord;
-use zksync_os_object_store::{ObjectStoreConfig, ObjectStoreMode};
 use zksync_os_server::config::{
     BatchVerificationConfig, Config, FakeFriProversConfig, FakeSnarkProversConfig, FeeConfig,
     NetworkConfig, ProverApiConfig, RpcConfig, StatusServerConfig,
@@ -204,7 +203,6 @@ pub struct Tester {
 
     #[allow(dead_code)]
     tempdir: Arc<tempfile::TempDir>,
-    main_node_tempdir: Arc<tempfile::TempDir>,
 
     // Needed to be able to connect external nodes
     node_record: NodeRecord,
@@ -762,12 +760,12 @@ impl GatewayTester {
 
     /// Get chain A (first chain)
     pub fn chain_a(&self) -> &Tester {
-        self.chain(0)
+        self.chain(1)
     }
 
     /// Get chain B (second chain)
     pub fn chain_b(&self) -> &Tester {
-        self.chain(1)
+        self.chain(2)
     }
 
     pub fn gateway(&self) -> &Tester {
