@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use zksync_os_integration_tests::assert_traits::{ReceiptAssert, ReceiptsAssert};
 use zksync_os_integration_tests::contracts::{EventEmitter, TracingPrimary, TracingSecondary};
 use zksync_os_integration_tests::dyn_wallet_provider::EthDynProvider;
-use zksync_os_integration_tests::{CURRENT_TO_L1, NEXT_TO_GATEWAY, Tester, test_casing};
+use zksync_os_integration_tests::{CURRENT_TO_L1, Tester, test_casing};
 
 fn check_call_frame(
     call_frame: CallFrame,
