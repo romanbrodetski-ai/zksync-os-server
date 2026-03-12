@@ -82,6 +82,128 @@ fn case_fn_name(case: &Path) -> Result<syn::Ident> {
     Ok(format_ident!("{case_name}"))
 }
 
+/// Generates one async test wrapper per `TestCase` path passed to the attribute.
+///
+/// The macro rewrites the annotated function into a private implementation function and emits a
+/// module with one wrapper test per case:
+///
+/// - each wrapper binds `let case = <path>;`
+/// - if the function takes a `TesterBuilder`, the wrapper starts from `case.builder()`
+/// - if the function takes a `Tester`, the wrapper builds it with `case.builder().build().await?`
+/// - if the function takes a `TestCase`, the wrapper passes the case value directly
+///
+/// Supported parameter types are:
+///
+/// - `TestCase`
+/// - `TesterBuilder`
+/// - `Tester`
+///
+/// `TestCase` may be combined with either `TesterBuilder` or `Tester`.
+/// `TesterBuilder` and `Tester` cannot be used together in the same function signature.
+///
+/// Apply your test framework attribute, such as `#[tokio::test]` or
+/// `#[test_log::test(tokio::test)]`, to the annotated function. Those attributes are copied onto
+/// each generated wrapper test.
+///
+/// # Cases
+///
+/// The attribute expects a bracketed list of case paths:
+///
+/// ```ignore
+/// #[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+/// ```
+///
+/// Each path should evaluate to a `TestCase`, typically one of the exported constants from
+/// `zksync_os_integration_tests`.
+///
+/// # Builder customization
+///
+/// Use `#[test_builder(...)]` when every generated case should apply the same builder tweak before
+/// the `TesterBuilder` or `Tester` is created. The argument must be a function or closure with the
+/// shape `fn(TesterBuilder) -> TesterBuilder`.
+///
+/// ```ignore
+/// #[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+/// #[test_builder(|builder| builder.block_time(Duration::from_secs(5)))]
+/// #[test_log::test(tokio::test)]
+/// async fn pending_nonce_uses_slow_blocks(tester: Tester) -> anyhow::Result<()> {
+///     // `tester` is built from the adjusted builder for each case.
+///     Ok(())
+/// }
+/// ```
+///
+/// # Examples
+///
+/// Build and use a ready `Tester`:
+///
+/// ```ignore
+/// use zksync_os_integration_tests::{CURRENT_TO_L1, NEXT_TO_GATEWAY, Tester, test_casing};
+///
+/// #[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+/// #[test_log::test(tokio::test)]
+/// async fn basic_rpc_smoke(tester: Tester) -> anyhow::Result<()> {
+///     let chain_id = tester.l2_provider.get_chain_id().await?;
+///     assert!(chain_id > 0);
+///     Ok(())
+/// }
+/// ```
+///
+/// Inspect the case without starting the node:
+///
+/// ```ignore
+/// use zksync_os_integration_tests::{CURRENT_TO_L1, NEXT_TO_GATEWAY, TestCase, test_casing};
+/// use zksync_os_integration_tests::SettlementLayer;
+///
+/// #[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+/// #[test_log::test(tokio::test)]
+/// async fn case_metadata_is_expected(case: TestCase) -> anyhow::Result<()> {
+///     match case.settlement_layer {
+///         SettlementLayer::L1 | SettlementLayer::Gateway => {}
+///     }
+///     Ok(())
+/// }
+/// ```
+///
+/// Customize the builder inside the test before constructing a `Tester`:
+///
+/// ```ignore
+/// use zksync_os_integration_tests::{CURRENT_TO_L1, TesterBuilder, test_casing};
+///
+/// #[test_casing([CURRENT_TO_L1])]
+/// #[test_log::test(tokio::test)]
+/// async fn prover_flow(builder: TesterBuilder) -> anyhow::Result<()> {
+///     let tester = builder.enable_prover().build().await?;
+///     tester.prover_tester.wait_for_batch_proven(1).await?;
+///     Ok(())
+/// }
+/// ```
+///
+/// Use both `TestCase` and `Tester` when assertions need case metadata and a running node:
+///
+/// ```ignore
+/// use zksync_os_integration_tests::{
+///     CURRENT_TO_L1, NEXT_TO_GATEWAY, TestCase, Tester, test_casing,
+/// };
+///
+/// #[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+/// #[test_log::test(tokio::test)]
+/// async fn settlement_layer_matches_runtime(
+///     case: TestCase,
+///     tester: Tester,
+/// ) -> anyhow::Result<()> {
+///     let chain_id = tester.l2_provider.get_chain_id().await?;
+///     assert!(chain_id > 0, "unexpected case: {:?}", case);
+///     Ok(())
+/// }
+/// ```
+///
+/// # Compile-time restrictions
+///
+/// - the annotated function must be `async`
+/// - methods taking `self` are not supported
+/// - only `TestCase`, `TesterBuilder`, and `Tester` parameters are accepted
+/// - `TesterBuilder` and `Tester` cannot be used together in the same function
+/// - `#[test_builder(...)]` may be used at most once
 #[proc_macro_attribute]
 pub fn test_casing(attr: TokenStream, item: TokenStream) -> TokenStream {
     let cases = parse_macro_input!(attr as CaseList);
@@ -130,6 +252,15 @@ pub fn test_casing(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             Err(err) => return err.into_compile_error().into(),
         }
+    }
+
+    if needs_builder && needs_tester {
+        return syn::Error::new_spanned(
+            &input.sig.inputs,
+            "`TesterBuilder` and `Tester` cannot be used together in the same test function",
+        )
+        .into_compile_error()
+        .into();
     }
 
     let builder_setup = if needs_builder || needs_tester {
