@@ -29,7 +29,8 @@ use zksync_os_contract_interface::l1_discovery::L1State;
 use zksync_os_network::NodeRecord;
 use zksync_os_server::config::{
     BatchVerificationConfig, Config, FakeFriProversConfig, FakeSnarkProversConfig, FeeConfig,
-    NetworkConfig, ProofStorageConfig, ProverApiConfig, RpcConfig, StatusServerConfig,
+    GeneralConfig, NetworkConfig, ProofStorageConfig, ProverApiConfig, ProverInputGeneratorConfig,
+    RpcConfig, SequencerConfig, StatusServerConfig,
 };
 use zksync_os_server::default_protocol_version::{NEXT_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use zksync_os_state_full_diffs::FullDiffsState;
@@ -136,7 +137,6 @@ pub struct Tester {
 
     #[allow(dead_code)]
     tempdir: Arc<tempfile::TempDir>,
-    main_node_tempdir: Arc<tempfile::TempDir>,
 
     // Needed to be able to connect external nodes
     node_record: NodeRecord,
@@ -203,7 +203,6 @@ impl Tester {
             self.l1.clone(),
             false,
             Some(overrides_fun),
-            Some(self.main_node_tempdir.clone()),
             self.chain_layout,
         )
         .await
@@ -213,7 +212,6 @@ impl Tester {
         l1: AnvilL1,
         enable_prover: bool,
         config_overrides: Option<impl FnOnce(&mut Config)>,
-        main_node_tempdir: Option<Arc<tempfile::TempDir>>,
         chain_layout: ChainLayout<'static>,
     ) -> anyhow::Result<Self> {
         // Initialize and **hold** locked ports for the duration of node initialization.
@@ -231,8 +229,61 @@ impl Tester {
             format!("http://localhost:{}", batch_verification_locked_port.port);
 
         let tempdir = tempfile::tempdir()?;
-        let (stop_sender, stop_receiver) = watch::channel(false);
         let rocks_db_path = tempdir.path().join("rocksdb");
+        // ENs will not use this dir
+        let proof_storage_path = tempdir.path().join("proof_storage_path");
+        let (stop_sender, stop_receiver) = watch::channel(false);
+
+        // Create a handle to run the sequencer in the background
+        let general_config = GeneralConfig {
+            rocks_db_path: rocks_db_path.clone(),
+            l1_rpc_url: l1.address.clone(),
+            ..Default::default()
+        };
+        let sequencer_config = SequencerConfig {
+            fee_collector_address: Address::random(),
+            ..Default::default()
+        };
+        let rpc_config = RpcConfig {
+            address: l2_rpc_address.clone(),
+            // Override default with a higher value as the test can be slow in CI
+            send_raw_transaction_sync_timeout: Duration::from_secs(10),
+            ..Default::default()
+        };
+        let prover_api_config = ProverApiConfig {
+            fake_fri_provers: FakeFriProversConfig {
+                enabled: !enable_prover,
+                ..Default::default()
+            },
+            fake_snark_provers: FakeSnarkProversConfig {
+                enabled: !enable_prover,
+                ..Default::default()
+            },
+            address: prover_api_address,
+            proof_storage: ProofStorageConfig {
+                path: proof_storage_path.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let batch_verification_config = BatchVerificationConfig {
+            server_enabled: false,
+            listen_address: batch_verification_address.clone(),
+            client_enabled: false,
+            connect_address: batch_verification_url.clone(),
+            threshold: 1, // default to 1 of 2
+            accepted_signers: BATCH_VERIFICATION_ADDRESSES.clone(),
+            request_timeout: Duration::from_millis(500),
+            retry_delay: Duration::from_secs(1),
+            total_timeout: Duration::from_secs(300),
+            signing_key: BATCH_VERIFICATION_KEYS[0].into(),
+        };
+
+        let status_server_config = StatusServerConfig {
+            enabled: true,
+            address: status_address,
+        };
+
         let default_config = load_chain_config(chain_layout);
 
         let network_secret_key = zksync_os_network::rng_secret_key();
@@ -248,53 +299,33 @@ impl Tester {
             boot_nodes: vec![],
         };
 
-        let mut config = default_config;
-        config.general_config.l1_rpc_url = l1.address.clone();
-        config.general_config.rocks_db_path = rocks_db_path.clone();
-        config.network_config = network_config;
-        config.rpc_config = RpcConfig {
-            address: l2_rpc_address.clone(),
-            send_raw_transaction_sync_timeout: Duration::from_secs(10),
-            ..config.rpc_config
-        };
-        config.sequencer_config.fee_collector_address = Address::random();
-        config.prover_input_generator_config.logging_enabled = enable_prover;
-        config.prover_api_config = ProverApiConfig {
-            fake_fri_provers: FakeFriProversConfig {
-                enabled: !enable_prover,
-                ..config.prover_api_config.fake_fri_provers
+        let mut config = Config {
+            general_config,
+            network_config,
+            genesis_config: default_config.genesis_config.clone(),
+            rpc_config,
+            mempool_config: Default::default(),
+            tx_validator_config: Default::default(),
+            sequencer_config,
+            l1_sender_config: default_config.l1_sender_config.clone(),
+            l1_watcher_config: Default::default(),
+            batcher_config: Default::default(),
+            prover_input_generator_config: ProverInputGeneratorConfig {
+                logging_enabled: enable_prover,
+                ..Default::default()
             },
-            fake_snark_provers: FakeSnarkProversConfig {
-                enabled: !enable_prover,
-                ..config.prover_api_config.fake_snark_provers
-            },
-            address: prover_api_address,
-            proof_storage: ProofStorageConfig {
-                path: main_node_tempdir
-                    .as_ref()
-                    .map(|t| t.path())
-                    .unwrap_or(tempdir.path())
-                    .join("fri_proofs"),
-                ..ProofStorageConfig::default()
-            },
-            ..config.prover_api_config
+            prover_api_config,
+            status_server_config,
+            observability_config: Default::default(),
+            gas_adjuster_config: Default::default(),
+            batch_verification_config,
+            base_token_price_updater_config: default_config.base_token_price_updater_config.clone(),
+            external_price_api_client_config: default_config
+                .external_price_api_client_config
+                .clone(),
+            fee_config: Default::default(),
         };
-        config.batch_verification_config = BatchVerificationConfig {
-            server_enabled: false,
-            listen_address: batch_verification_address.clone(),
-            client_enabled: false,
-            connect_address: batch_verification_url.clone(),
-            threshold: 1,
-            accepted_signers: BATCH_VERIFICATION_ADDRESSES.clone(),
-            request_timeout: Duration::from_millis(500),
-            retry_delay: Duration::from_secs(1),
-            total_timeout: Duration::from_secs(300),
-            signing_key: BATCH_VERIFICATION_KEYS[0].into(),
-        };
-        config.status_server_config = StatusServerConfig {
-            enabled: true,
-            address: status_address,
-        };
+
         if config.general_config.ephemeral {
             enable_ephemeral_mode_for_tests(tempdir.path(), &mut config);
         }
@@ -408,7 +439,6 @@ impl Tester {
             gateway_rpc_url,
             node_record,
             tempdir: tempdir.clone(),
-            main_node_tempdir: main_node_tempdir.unwrap_or(tempdir),
             chain_layout,
             supporting_nodes: Vec::new(),
         })
@@ -628,7 +658,6 @@ impl TesterBuilder {
                     l1,
                     options.enable_prover,
                     Some(move |config: &mut Config| options.apply_to_config(config)),
-                    None,
                     chain_layout,
                 )
                 .await
@@ -744,7 +773,6 @@ impl GatewayTesterBuilder {
             Some(|config: &mut Config| {
                 config.sequencer_config.block_time = Duration::from_millis(500);
             }),
-            None,
             ChainLayout::Gateway { protocol_version },
         )
         .await?;
@@ -774,7 +802,6 @@ impl GatewayTesterBuilder {
                     }
                     chain_options.apply_to_config(config);
                 }),
-                None,
                 chain_layout,
             )
             .await?;

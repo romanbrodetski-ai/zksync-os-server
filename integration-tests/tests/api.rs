@@ -7,7 +7,9 @@ use regex::Regex;
 use std::time::Duration;
 use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::contracts::EventEmitter;
-use zksync_os_integration_tests::{CURRENT_TO_L1, NEXT_TO_GATEWAY, Tester, test_casing, TesterBuilder};
+use zksync_os_integration_tests::{
+    CURRENT_TO_L1, NEXT_TO_GATEWAY, Tester, TesterBuilder, test_casing,
+};
 use zksync_os_server::config::FeeConfig;
 
 #[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]

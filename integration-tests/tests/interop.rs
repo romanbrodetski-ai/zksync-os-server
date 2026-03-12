@@ -14,8 +14,7 @@ use zksync_os_contract_interface::Bridgehub;
 use zksync_os_contract_interface::IMailbox::NewPriorityRequest;
 use zksync_os_integration_tests::assert_traits::ProviderAssert;
 use zksync_os_integration_tests::{
-    GatewayTester, Tester, assert_traits::ReceiptAssert, contracts::TestERC20,
-    provider::ZksyncApi,
+    GatewayTester, Tester, assert_traits::ReceiptAssert, contracts::TestERC20, provider::ZksyncApi,
 };
 use zksync_os_rpc_api::types::LogProofTarget;
 use zksync_os_types::{L1PriorityTxType, L1TxType, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE};
