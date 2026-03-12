@@ -107,7 +107,7 @@ const REPOSITORY_DB_NAME: &str = "repository";
 const BATCH_DB_NAME: &str = "batch";
 pub const INTERNAL_CONFIG_FILE_NAME: &str = "internal_config.json";
 const L1_STATE_FETCH_RETRY_DELAY: Duration = Duration::from_millis(250);
-const L1_STATE_FETCH_MAX_ATTEMPTS: usize = 240;
+const L1_STATE_FETCH_MAX_ATTEMPTS: usize = 1;
 
 fn error_chain_contains(err: &anyhow::Error, needle: &str) -> bool {
     err.chain().any(|cause| cause.to_string().contains(needle))

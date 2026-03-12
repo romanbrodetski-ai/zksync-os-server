@@ -109,65 +109,6 @@ impl TestCase {
 pub const CURRENT_TO_L1: TestCase = TestCase::current_to_l1();
 pub const NEXT_TO_L1: TestCase = TestCase::next_to_l1();
 pub const NEXT_TO_GATEWAY: TestCase = TestCase::next_to_gateway();
-pub const V30_L1: TestCase = CURRENT_TO_L1;
-pub const V31_L1: TestCase = NEXT_TO_L1;
-pub const V31_GATEWAY: TestCase = NEXT_TO_GATEWAY;
-
-#[macro_export]
-macro_rules! integration_test_matrix {
-    ($(#[$attr:meta])* $name:ident, $body:expr $(,)?) => {
-        mod $name {
-            use super::*;
-            use core::future::Future;
-
-            async fn run_case<F, Fut>(f: F, case: $crate::TestCase) -> anyhow::Result<()>
-            where
-                F: FnOnce($crate::TestCase) -> Fut,
-                Fut: Future<Output = anyhow::Result<()>>,
-            {
-                f(case).await
-            }
-
-            $(#[$attr])*
-            async fn current_to_l1() -> anyhow::Result<()> {
-                run_case($body, $crate::TestCase::current_to_l1()).await
-            }
-
-            $(#[$attr])*
-            async fn next_to_l1() -> anyhow::Result<()> {
-                run_case($body, $crate::TestCase::next_to_l1()).await
-            }
-
-            $(#[$attr])*
-            async fn next_to_gateway() -> anyhow::Result<()> {
-                run_case($body, $crate::TestCase::next_to_gateway()).await
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! interop_test_matrix {
-    ($(#[$attr:meta])* $name:ident, $body:expr $(,)?) => {
-        mod $name {
-            use super::*;
-            use core::future::Future;
-
-            async fn run_case<F, Fut>(f: F, case: $crate::TestCase) -> anyhow::Result<()>
-            where
-                F: FnOnce($crate::TestCase) -> Fut,
-                Fut: Future<Output = anyhow::Result<()>>,
-            {
-                f(case).await
-            }
-
-            $(#[$attr])*
-            async fn next_to_gateway() -> anyhow::Result<()> {
-                run_case($body, $crate::TestCase::next_to_gateway()).await
-            }
-        }
-    };
-}
 
 /// Set of private keys for batch verification participants.
 pub const BATCH_VERIFICATION_KEYS: [&str; 2] = [
@@ -901,7 +842,7 @@ async fn wait_for_gateway_readiness(
                 )
             })?;
 
-        L1State::fetch(
+        L1State::fetch_finalized(
             DynProvider::new(l1.provider.clone()),
             DynProvider::new(gateway_provider),
             bridgehub_address,

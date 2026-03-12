@@ -106,10 +106,8 @@ impl<'a> ChainLayout<'a> {
 pub fn load_chain_config(layout: ChainLayout<'_>) -> Config {
     let mut config = load_config_from_path(&layout.config_path());
     config.genesis_config.genesis_input_path = Some(layout.genesis_input_path());
-    if let Some(ephemeral_state) = &config.general_config.ephemeral_state {
-        if ephemeral_state.is_relative() {
-            config.general_config.ephemeral_state = Some(workspace_dir().join(ephemeral_state));
-        }
+    if let Some(ephemeral_state) = &config.general_config.ephemeral_state && ephemeral_state.is_relative() {
+        config.general_config.ephemeral_state = Some(workspace_dir().join(ephemeral_state));
     }
     config
 }
