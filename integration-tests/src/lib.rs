@@ -16,7 +16,6 @@ use anyhow::Context;
 use backon::ConstantBuilder;
 use backon::Retryable;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -326,8 +325,12 @@ impl Tester {
             fee_config: Default::default(),
         };
 
-        if config.general_config.ephemeral {
-            enable_ephemeral_mode_for_tests(tempdir.path(), &mut config);
+        if let Some(ephemeral_state) = &config.general_config.ephemeral_state {
+            tracing::info!("Loading ephemeral state from {}", ephemeral_state.display());
+            zksync_os_server::util::unpack_ephemeral_state(
+                ephemeral_state,
+                &config.general_config.rocks_db_path,
+            );
         }
         if let Some(f) = config_overrides {
             f(&mut config)
@@ -442,21 +445,6 @@ impl Tester {
             chain_layout,
             supporting_nodes: Vec::new(),
         })
-    }
-}
-
-fn enable_ephemeral_mode_for_tests(tempdir_path: &Path, config: &mut Config) {
-    let rocks_db_path = tempdir_path.join("node");
-    config.general_config.rocks_db_path = rocks_db_path.clone();
-    config.prover_api_config.proof_storage.path = tempdir_path.join("shared");
-    config.prover_api_config.enabled = false;
-    config.status_server_config.enabled = false;
-
-    if let Some(ephemeral_state) = &config.general_config.ephemeral_state {
-        zksync_os_server::util::unpack_ephemeral_state(
-            ephemeral_state,
-            &config.general_config.rocks_db_path,
-        );
     }
 }
 
@@ -770,9 +758,7 @@ impl GatewayTesterBuilder {
         let gateway = Tester::launch_node(
             l1.clone(),
             false,
-            Some(|config: &mut Config| {
-                config.sequencer_config.block_time = Duration::from_millis(500);
-            }),
+            None::<fn(&mut Config)>,
             ChainLayout::Gateway { protocol_version },
         )
         .await?;
@@ -797,9 +783,6 @@ impl GatewayTesterBuilder {
                 chain_options.enable_prover,
                 Some(move |config: &mut Config| {
                     config.general_config.gateway_rpc_url = Some(gateway_rpc_url.clone());
-                    if chain_options.block_time.is_none() {
-                        config.sequencer_config.block_time = Duration::from_millis(500);
-                    }
                     chain_options.apply_to_config(config);
                 }),
                 chain_layout,
