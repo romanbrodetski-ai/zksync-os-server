@@ -10,7 +10,7 @@ use crate::batcher_model::{FriProof, SignedBatchEnvelope};
 use crate::commands::{L1SenderCommand, SendToL1};
 use crate::config::L1SenderConfig;
 use crate::metrics::{L1_SENDER_METRICS, L1SenderState};
-use alloy::consensus::{BlobTransactionValidationError, EnvKzgSettings};
+use alloy::consensus::BlobTransactionValidationError;
 use alloy::eips::eip7594::BlobTransactionSidecarVariant;
 use alloy::eips::{BlockId, Encodable2718};
 use alloy::network::{Ethereum, EthereumWallet, TransactionBuilder, TransactionBuilder4844};
@@ -21,14 +21,13 @@ use alloy::providers::fillers::{FillProvider, TxFiller};
 use alloy::providers::{PendingTransactionError, Provider, WalletProvider};
 use alloy::rpc::types::trace::geth::{CallConfig, GethDebugTracingOptions};
 use alloy::rpc::types::{TransactionReceipt, TransactionRequest};
-use alloy::signers::k256::ecdsa::SigningKey;
-use alloy::signers::local::PrivateKeySigner;
 use anyhow::Context;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 use zksync_os_observability::{ComponentStateHandle, ComponentStateReporter};
+use zksync_os_operator_signer::SignerConfig;
 use zksync_os_pipeline::PeekableReceiver;
 
 /// Maximum time to wait for a transaction to be included on L1.
@@ -78,7 +77,8 @@ pub async fn run_l1_sender<Input: SendToL1>(
         ComponentStateReporter::global().handle_for(Input::NAME, L1SenderState::WaitingRecv);
     let command_name = Input::NAME;
 
-    let operator_address = register_operator::<_, Input>(&mut provider, config.operator_sk).await?;
+    let operator_address =
+        register_operator::<_, Input>(&mut provider, config.operator_signer).await?;
     let mut cmd_buffer = Vec::with_capacity(config.command_limit);
 
     // Process all potential passthrough commands first
@@ -160,21 +160,20 @@ pub async fn run_l1_sender<Input: SendToL1>(
                     let envelope = provider.fill(tx_request).await?.try_into_envelope()?.try_into_pooled()?;
 
                     let pending_block = provider.get_block(BlockId::pending()).await?.expect("no pending block");
-                    // todo: make conversion unconditional (and remove respective config) once both:
-                    //       1) Fusaka upgrade is executed on mainnet
-                    //       2) anvil supports EIP-7594 blobs (see https://github.com/foundry-rs/foundry/issues/12222)
+                    // todo: make conversion unconditional (and remove respective config) once anvil
+                    //       supports EIP-7594 blobs (see https://github.com/foundry-rs/foundry/issues/12222)
                     let tx = if config.fusaka_upgrade_timestamp <= pending_block.header.timestamp {
                         // Convert the envelope into an EIP-7594 transaction by converting the sidecar
                         envelope.try_map_eip4844(|tx| {
                             tx.try_map_sidecar(|sidecar| {
                                 Ok::<_, BlobTransactionValidationError>(
-                                    BlobTransactionSidecarVariant::Eip7594(sidecar.try_into_7594(EnvKzgSettings::Default.get())?)
+                                    BlobTransactionSidecarVariant::Eip7594(sidecar.try_into_eip7594()?)
                                 )
                             })
                         })?
                     } else {
                         // Keep the regular EIP-4844 sidecar
-                        envelope.map_eip4844(|tx| tx.map_sidecar(BlobTransactionSidecarVariant::Eip4844))
+                        envelope
                     };
 
                     // We don't wait for receipt here, instead we register an alloy watcher that
@@ -326,11 +325,11 @@ async fn register_operator<
     Input: SendToL1,
 >(
     provider: &mut P,
-    signing_key: SigningKey,
+    signer_config: SignerConfig,
 ) -> anyhow::Result<Address> {
-    let signer = PrivateKeySigner::from_signing_key(signing_key);
-    let address = signer.address();
-    provider.wallet_mut().register_signer(signer);
+    let address = signer_config
+        .register_with_wallet(provider.wallet_mut())
+        .await?;
 
     let balance = provider.get_balance(address).await?;
     L1_SENDER_METRICS.balance[&Input::NAME].set(format_ether(balance).parse()?);

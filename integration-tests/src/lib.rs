@@ -7,20 +7,11 @@ use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder, WalletProvider};
 use alloy::signers::local::{LocalSigner, PrivateKeySigner};
-#[cfg(feature = "prover-tests")]
-use alloy::transports::http::reqwest::{
-    self, StatusCode,
-    blocking::Client,
-    header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
-};
 use anyhow::Context;
 use backon::ConstantBuilder;
 use backon::Retryable;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-#[cfg(feature = "prover-tests")]
-use std::path::{Path, PathBuf};
-#[cfg(feature = "prover-tests")]
-use std::process::Command;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -28,11 +19,10 @@ use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use zksync_os_network::NodeRecord;
-use zksync_os_object_store::{ObjectStoreConfig, ObjectStoreMode};
 use zksync_os_server::config::{
     BatchVerificationConfig, Config, FakeFriProversConfig, FakeSnarkProversConfig, FeeConfig,
-    GeneralConfig, NetworkConfig, ProverApiConfig, ProverInputGeneratorConfig, RpcConfig,
-    SequencerConfig, StatusServerConfig,
+    GeneralConfig, NetworkConfig, ProofStorageConfig, ProverApiConfig, ProverInputGeneratorConfig,
+    RpcConfig, SequencerConfig, StatusServerConfig,
 };
 use zksync_os_server::default_protocol_version::{NEXT_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use zksync_os_state_full_diffs::FullDiffsState;
@@ -86,7 +76,6 @@ pub struct Tester {
 
     #[allow(dead_code)]
     tempdir: Arc<tempfile::TempDir>,
-    main_node_tempdir: Arc<tempfile::TempDir>,
 
     // Needed to be able to connect external nodes
     node_record: NodeRecord,
@@ -149,7 +138,6 @@ impl Tester {
             self.l1.clone(),
             false,
             Some(overrides_fun),
-            Some(self.main_node_tempdir.clone()),
             PROTOCOL_VERSION,
         )
         .await
@@ -159,7 +147,6 @@ impl Tester {
         l1: AnvilL1,
         enable_prover: bool,
         config_overrides: Option<impl FnOnce(&mut Config)>,
-        main_node_tempdir: Option<Arc<tempfile::TempDir>>,
         protocol_version: &str,
     ) -> anyhow::Result<Self> {
         // Initialize and **hold** locked ports for the duration of node initialization.
@@ -178,11 +165,8 @@ impl Tester {
 
         let tempdir = tempfile::tempdir()?;
         let rocks_db_path = tempdir.path().join("rocksdb");
-        let object_store_path = main_node_tempdir
-            .as_ref()
-            .map(|t| t.path())
-            .unwrap_or(tempdir.path())
-            .join("object_store");
+        // ENs will not use this dir
+        let proof_storage_path = tempdir.path().join("proof_storage_path");
         let (stop_sender, stop_receiver) = watch::channel(false);
 
         // Create a handle to run the sequencer in the background
@@ -211,12 +195,9 @@ impl Tester {
                 ..Default::default()
             },
             address: prover_api_address,
-            object_store: ObjectStoreConfig {
-                mode: ObjectStoreMode::FileBacked {
-                    file_backed_base_path: object_store_path.clone(),
-                },
-                max_retries: 1,
-                local_mirror_path: None,
+            proof_storage: ProofStorageConfig {
+                path: proof_storage_path.clone(),
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -404,7 +385,6 @@ impl Tester {
             batch_verification_url,
             node_record,
             tempdir: tempdir.clone(),
-            main_node_tempdir: main_node_tempdir.unwrap_or(tempdir),
         })
     }
 }
@@ -480,7 +460,6 @@ impl TesterBuilder {
             l1,
             self.enable_prover,
             Some(overrides_fun),
-            None,
             PROTOCOL_VERSION,
         )
         .await
@@ -518,12 +497,12 @@ impl MultiChainTester {
 
     /// Get chain A (first chain)
     pub fn chain_a(&self) -> &Tester {
-        self.chain(0)
+        self.chain(1)
     }
 
     /// Get chain B (second chain)
     pub fn chain_b(&self) -> &Tester {
-        self.chain(1)
+        self.chain(2)
     }
 }
 
@@ -551,55 +530,69 @@ impl MultiChainTesterBuilder {
         })
         .await?;
 
-        // Launch L2 chains concurrently for faster setup
-        let mut futures = Vec::new();
+        // Launch L2 chains using chain configurations from config files
+        let mut chains: Vec<Tester> = Vec::new();
         for i in 0..num_chains {
-            let l1 = l1.clone();
-            futures.push(async move {
-                // Load the chain config to get the chain ID, operator keys, and contract addresses
-                let chain_config = load_chain_config(ChainLayout::MultiChain {
-                    protocol_version: NEXT_PROTOCOL_VERSION,
-                    chain_index: i,
-                });
-                let chain_id = chain_config
-                    .genesis_config
-                    .chain_id
-                    .expect("Chain ID must be set in chain config");
-                let l1_sender_config = chain_config.l1_sender_config.clone();
-                let bridgehub_address = chain_config.genesis_config.bridgehub_address;
-                let bytecode_supplier_address =
-                    chain_config.genesis_config.bytecode_supplier_address;
-
-                let chain_override = move |config: &mut Config| {
-                    config.genesis_config.chain_id = Some(chain_id);
-                    config.genesis_config.bridgehub_address = bridgehub_address;
-                    config.genesis_config.bytecode_supplier_address = bytecode_supplier_address;
-                    config.l1_sender_config = l1_sender_config.clone();
-                    // Use short block time for faster tests
-                    config.sequencer_config.block_time = Duration::from_millis(500);
-                };
-
-                let tester = Tester::launch_node(
-                    l1,
-                    false, // disable prover for faster tests
-                    Some(chain_override),
-                    None,
-                    NEXT_PROTOCOL_VERSION,
-                )
-                .await?;
-
-                tracing::info!(
-                    "L2 chain {} started with chain_id {} on {}",
-                    i,
-                    chain_id,
-                    tester.l2_rpc_address
-                );
-
-                anyhow::Ok(tester)
+            // Load the chain config to get the chain ID, operator keys, and contract addresses
+            let chain_config = load_chain_config(ChainLayout::MultiChain {
+                protocol_version: NEXT_PROTOCOL_VERSION,
+                chain_index: i,
             });
-        }
+            let chain_id = chain_config
+                .genesis_config
+                .chain_id
+                .expect("Chain ID must be set in chain config");
+            let gateway_rpc_url = chain_config
+                .general_config
+                .gateway_rpc_url
+                .map(|_| chains[0].l2_rpc_address.clone());
+            let ephemeral_state = chain_config.general_config.ephemeral_state;
+            let l1_sender_config = chain_config.l1_sender_config.clone();
+            let bridgehub_address = chain_config.genesis_config.bridgehub_address;
+            let bytecode_supplier_address = chain_config.genesis_config.bytecode_supplier_address;
 
-        let chains = futures::future::try_join_all(futures).await?;
+            let chain_override = move |config: &mut Config| {
+                if gateway_rpc_url.is_some() {
+                    config.general_config.gateway_rpc_url = gateway_rpc_url;
+                }
+                config.genesis_config.chain_id = Some(chain_id);
+                config.genesis_config.bridgehub_address = bridgehub_address;
+                config.genesis_config.bytecode_supplier_address = bytecode_supplier_address;
+                config.l1_sender_config = l1_sender_config.clone();
+                // Use short block time for faster tests
+                config.sequencer_config.block_time = Duration::from_millis(500);
+
+                if let Some(ephemeral_state) = &ephemeral_state {
+                    let ephemeral_state = Path::new("..").join(ephemeral_state);
+                    tracing::info!("Loading ephemeral state from {}", ephemeral_state.display());
+                    zksync_os_server::util::unpack_ephemeral_state(
+                        &ephemeral_state,
+                        &config.general_config.rocks_db_path,
+                    );
+                }
+            };
+
+            let tester = Tester::launch_node(
+                l1.clone(),
+                false, // disable prover for faster tests
+                Some(chain_override),
+                NEXT_PROTOCOL_VERSION,
+            )
+            .await?;
+
+            tracing::info!(
+                "L2 chain {} started with chain_id {} on {}",
+                i,
+                chain_id,
+                tester.l2_rpc_address
+            );
+
+            chains.push(tester);
+
+            if i + 1 < num_chains {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
 
         Ok(MultiChainTester { l1, chains })
     }
@@ -712,8 +705,14 @@ async fn download_prover_and_unpack(gpu: bool) -> String {
             "downloading prover service archive from {url} to {}",
             archive_path.display()
         );
-        let resp = download_prover_binary(&url).expect("failed to download");
-        let body = resp.bytes().expect("failed to read response body").to_vec();
+        let resp = download_prover_binary(&url)
+            .await
+            .expect("failed to download");
+        let body = resp
+            .bytes()
+            .await
+            .expect("failed to read response body")
+            .to_vec();
         std::fs::write(archive_path.as_path(), body).expect("failed to write archive");
     }
 
@@ -723,19 +722,21 @@ async fn download_prover_and_unpack(gpu: bool) -> String {
             .expect("failed to clear previous extraction dir");
     }
     std::fs::create_dir_all(extract_dir.as_path()).expect("failed to create extraction dir");
-    let status = Command::new("tar")
-        .arg("-xzf")
-        .arg(archive_path.as_path())
-        .arg("-C")
-        .arg(extract_dir.as_path())
-        .status()
-        .expect("failed to execute `tar` to unpack prover archive");
-    if !status.success() {
-        panic!(
-            "failed to unpack prover archive {} with status {status}",
-            archive_path.display()
-        );
-    }
+    let (archive_path_clone, extract_dir_clone) = (archive_path.clone(), extract_dir.clone());
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&archive_path_clone)
+            .expect("prover archive exists and is readable");
+        tar::Archive::new(flate2::read::GzDecoder::new(file))
+            .unpack(&extract_dir_clone)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "failed to unpack prover archive {}: {e}",
+                    archive_path_clone.display()
+                )
+            });
+    })
+    .await
+    .expect("extraction task did not panic");
 
     let extracted_binary_path =
         find_first_prover_binary(extract_dir.as_path()).unwrap_or_else(|| {
@@ -767,7 +768,7 @@ async fn download_prover_and_unpack(gpu: bool) -> String {
 }
 
 #[cfg(feature = "prover-tests")]
-fn find_first_prover_binary(dir: &Path) -> Option<PathBuf> {
+fn find_first_prover_binary(dir: &Path) -> Option<std::path::PathBuf> {
     for entry in std::fs::read_dir(dir).ok()? {
         let path = entry.ok()?.path();
         if path.is_dir() {
@@ -788,7 +789,12 @@ fn find_first_prover_binary(dir: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(feature = "prover-tests")]
-fn download_prover_binary(url: &str) -> anyhow::Result<reqwest::blocking::Response> {
+async fn download_prover_binary(url: &str) -> anyhow::Result<reqwest::Response> {
+    use reqwest::{
+        Client, StatusCode,
+        header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
+    };
+
     const DOWNLOAD_MAX_ATTEMPTS: usize = 5;
     const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
     const DOWNLOAD_BASE_BACKOFF_MS: u64 = 500;
@@ -818,11 +824,10 @@ fn download_prover_binary(url: &str) -> anyhow::Result<reqwest::blocking::Respon
     let client = Client::builder()
         .default_headers(headers)
         .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-        .build()
-        .unwrap();
+        .build()?;
 
     for attempt in 1..=DOWNLOAD_MAX_ATTEMPTS {
-        let response = client.get(url).send();
+        let response = client.get(url).send().await;
         match response {
             Ok(response) => {
                 let status = response.status();

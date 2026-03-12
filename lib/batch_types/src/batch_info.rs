@@ -56,12 +56,32 @@ impl BatchInfo {
         let (last_block_output, last_block_context, _, last_block_tree) = *blocks.last().unwrap();
 
         let mut upgrade_tx_hash = None;
+
+        let mut dependency_roots_rolling_hash = B256::ZERO;
+
         for (block_output, _, transactions, _) in blocks {
             total_pubdata.extend(block_output.pubdata.clone());
 
             for tx in transactions {
                 match tx.envelope() {
-                    ZkEnvelope::System(_) | ZkEnvelope::L2(_) => {
+                    ZkEnvelope::System(envelope) => {
+                        number_of_layer2_txs += 1;
+
+                        if let Some(roots) = envelope.interop_roots() {
+                            for root in roots {
+                                dependency_roots_rolling_hash = keccak256(
+                                    (
+                                        dependency_roots_rolling_hash,
+                                        root.chainId,
+                                        root.blockOrBatchNumber,
+                                        root.sides,
+                                    )
+                                        .abi_encode_packed(),
+                                );
+                            }
+                        }
+                    }
+                    ZkEnvelope::L2(_) => {
                         number_of_layer2_txs += 1;
                     }
                     ZkEnvelope::L1(l1_tx) => {
@@ -146,7 +166,7 @@ impl BatchInfo {
             number_of_layer1_txs,
             number_of_layer2_txs,
             priority_operations_hash,
-            dependency_roots_rolling_hash: B256::ZERO,
+            dependency_roots_rolling_hash,
             l2_to_l1_logs_root_hash,
             l2_da_commitment_scheme: pubdata_mode.da_commitment_scheme(),
             da_commitment: da_fields.da_commitment,
@@ -220,6 +240,8 @@ impl BatchInfo {
             dependency_roots_rolling_hash: commit_info.dependency_roots_rolling_hash,
             l2_to_l1_logs_root_hash: commit_info.l2_to_l1_logs_root_hash,
             commitment,
+            // unused
+            last_block_timestamp: Some(0),
         }
     }
 }
@@ -286,9 +308,10 @@ fn calculate_da_fields(
             (PubdataMode::Validium, _) => (B256::ZERO, vec![0u8; 32], None),
             (PubdataMode::Blobs, _) => {
                 // returns error in case of internal error during sidecar calculation
-                let blob_sidecar = SidecarBuilder::<SimpleCoder>::from_slice(pubdata)
-                    .build()
-                    .unwrap();
+                let blob_sidecar: BlobTransactionSidecar =
+                    SidecarBuilder::<SimpleCoder>::from_slice(pubdata)
+                        .build()
+                        .unwrap();
                 let versioned_hashes: Vec<u8> = blob_sidecar
                     .versioned_hashes()
                     .flat_map(|hash| hash.0.to_vec())

@@ -3,19 +3,19 @@ use crate::subpools::l1::L1Subpool;
 use crate::subpools::l2::{L2Subpool, L2TransactionsStreamMarker};
 use crate::subpools::sl_chain_id::SlChainIdSubpool;
 use crate::subpools::upgrade::{UpgradeSubpool, UpgradeTransactionsStream};
-use alloy::consensus::{Block, BlockBody, Header, Sealed};
+use alloy::consensus::{Header, Sealed};
 use alloy::primitives::TxHash;
 use futures::stream::{BoxStream, PollNext};
 use futures::{Stream, StreamExt};
 use reth_execution_types::ChangedAccount;
+use reth_primitives::{Block, BlockBody};
 use reth_primitives_traits::SealedBlock;
 use reth_transaction_pool::{CanonicalStateUpdate, PoolUpdateKind};
 use tokio::time::Instant;
 use zksync_os_interface::types::AccountDiff;
 use zksync_os_storage_api::ReplayRecord;
 use zksync_os_types::{
-    InteropRootsLogIndex, L1TxSerialId, L2Envelope, SystemTxType, UpgradeMetadata, ZkEnvelope,
-    ZkTransaction,
+    InteropRootsLogIndex, L1TxSerialId, SystemTxType, UpgradeMetadata, ZkEnvelope, ZkTransaction,
 };
 
 /// General pool that provides unified access to all transaction sources in the system.
@@ -176,7 +176,7 @@ impl<T: L2Subpool> Pool<T> {
                     SystemTxType::ImportInteropRoots(_) => {
                         interop_txs.push(system_tx);
                     }
-                    SystemTxType::SetSLChainId => {
+                    SystemTxType::SetSLChainId(_) => {
                         sl_chain_id_txs.push(system_tx);
                     }
                 },
@@ -198,7 +198,8 @@ impl<T: L2Subpool> Pool<T> {
             .interop_roots_subpool
             .on_canonical_state_change(interop_txs)
             .await;
-        self.sl_chain_id_subpool
+        let last_migration_number = self
+            .sl_chain_id_subpool
             .on_canonical_state_change(sl_chain_id_txs)
             .await;
         let last_l1_priority_id = self
@@ -207,7 +208,7 @@ impl<T: L2Subpool> Pool<T> {
             .await;
 
         let (header, hash) = header.into_parts();
-        let body = BlockBody::<L2Envelope>::default();
+        let body = BlockBody::default();
         let block = Block::new(header, body);
         let sealed_block = SealedBlock::new_unchecked(block, hash);
         let changed_accounts = account_diffs
@@ -232,6 +233,7 @@ impl<T: L2Subpool> Pool<T> {
         StateChangeOutcome {
             last_interop_log_index,
             last_l1_priority_id,
+            last_migration_number,
         }
     }
 }
@@ -251,6 +253,8 @@ pub struct StateChangeOutcome {
     pub last_interop_log_index: Option<InteropRootsLogIndex>,
     /// Last L1 priority ID that was executed after canonical state change.
     pub last_l1_priority_id: Option<L1TxSerialId>,
+    /// Last migration number that was executed after canonical state change.
+    pub last_migration_number: Option<u64>,
 }
 
 /// Transaction stream that is capable of marking last L2 transaction as invalid.
