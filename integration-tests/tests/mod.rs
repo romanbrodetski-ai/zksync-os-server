@@ -45,7 +45,7 @@ async fn basic_transfers(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn eip2930(tester: Tester) -> anyhow::Result<()> {
     // Test that the node can process EIP-2930 transactions

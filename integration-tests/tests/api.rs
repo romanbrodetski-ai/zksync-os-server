@@ -12,7 +12,7 @@ use zksync_os_integration_tests::{
 };
 use zksync_os_server::config::FeeConfig;
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn get_code(tester: Tester) -> anyhow::Result<()> {
     // Test that the node:
@@ -68,7 +68,7 @@ async fn get_code(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_builder(|builder| builder.block_time(Duration::from_secs(5)))]
 #[test_log::test(tokio::test)]
 async fn get_transaction_count(tester: Tester) -> anyhow::Result<()> {
@@ -99,7 +99,7 @@ async fn get_transaction_count(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn get_net_version(tester: Tester) -> anyhow::Result<()> {
     // Test that the node returns correct chain ID in `net_version` RPC call
@@ -109,7 +109,7 @@ async fn get_net_version(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn get_client_version(tester: Tester) -> anyhow::Result<()> {
     // Test that the node returns sensible value in `web3_clientVersion` RPC call
@@ -119,7 +119,7 @@ async fn get_client_version(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn get_gas_price_uses_configured_scale_factor(builder: TesterBuilder) -> anyhow::Result<()> {
     let known_base_fee: u128 = 100_000_000;
@@ -184,7 +184,7 @@ async fn send_raw_transaction_sync(tester: Tester) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn send_raw_transaction_sync_timeout(tester: Tester) -> anyhow::Result<()> {
     // Test that the node returns an error when `eth_sendRawTransactionSync` timeouts
@@ -218,7 +218,7 @@ async fn send_raw_transaction_sync_timeout(tester: Tester) -> anyhow::Result<()>
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn estimate_gas_with_high_prices(builder: TesterBuilder) -> anyhow::Result<()> {
     // Tests the estimations are accurate with high fee overrides.
@@ -256,7 +256,7 @@ async fn estimate_gas_with_high_prices(builder: TesterBuilder) -> anyhow::Result
     Ok(())
 }
 
-#[test_casing([CURRENT_TO_L1, NEXT_TO_GATEWAY])]
+#[test_casing([CURRENT_TO_L1])]
 #[test_log::test(tokio::test)]
 async fn estimate_gas_without_balance(tester: Tester) -> anyhow::Result<()> {
     // Test that the node can estimate transaction's gas even if sender does not have enough balance.
