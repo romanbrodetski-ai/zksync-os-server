@@ -241,7 +241,7 @@ impl FriJobManager {
             | ProvingVersion::V5 => {
                 panic!("proof verification for v1-v5 is not supported")
             }
-            ProvingVersion::V6 => {
+            ProvingVersion::V6 | ProvingVersion::V7 => {
                 tracing::debug!("Using 0.5.2 proof verifier for batch {}", batch_number);
                 let program_proof =
                     bincode::serde::decode_from_slice(proof_bytes, bincode::config::standard())

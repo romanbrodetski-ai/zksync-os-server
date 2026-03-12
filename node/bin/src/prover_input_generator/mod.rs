@@ -150,7 +150,7 @@ fn compute_prover_input(
         | ProvingVersion::V5 => {
             panic!("computing prover input for batch with prover version v1-v5 is not supported");
         }
-        ProvingVersion::V6 => {
+        ProvingVersion::V6 | ProvingVersion::V7 => {
             use zk_ee::{
                 common_structs::ProofData, system::metadata::zk_metadata::BlockMetadataFromOracle,
             };
@@ -166,11 +166,19 @@ fn compute_prover_input(
             let list_source = TxListSource { transactions };
 
             let bin_path = if enable_logging {
-                zksync_os_multivm::apps::v6::singleblock_batch_logging_enabled_path(
-                    &app_bin_base_path,
-                )
+                match proving_version {
+                    ProvingVersion::V6 => zksync_os_multivm::apps::v6::singleblock_batch_logging_enabled_path(
+                        &app_bin_base_path,
+                    ),
+                    _ => zksync_os_multivm::apps::v7::singleblock_batch_logging_enabled_path(
+                        &app_bin_base_path,
+                    ),
+                }
             } else {
-                zksync_os_multivm::apps::v6::singleblock_batch_path(&app_bin_base_path)
+                match proving_version {
+                    ProvingVersion::V6 => zksync_os_multivm::apps::v6::singleblock_batch_path(&app_bin_base_path),
+                    _ => zksync_os_multivm::apps::v7::singleblock_batch_path(&app_bin_base_path),
+                }
             };
 
             generate_proof_input(
