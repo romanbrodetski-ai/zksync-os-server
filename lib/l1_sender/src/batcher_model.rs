@@ -35,8 +35,6 @@ pub struct BatchMetadata {
     pub pubdata_mode: PubdataMode,
     // note: can equal to zero
     pub tx_count: usize,
-    #[serde(default = "default_execution_version")]
-    pub execution_version: u32,
     #[serde(default = "default_protocol_version")] // Default to allow deserializing older objects
     pub protocol_version: ProtocolSemanticVersion,
     #[serde(default)]
@@ -60,10 +58,6 @@ impl BatchMetadata {
     pub fn proving_version(&self) -> anyhow::Result<ProvingVersion> {
         Ok(ProvingVersion::try_from(self.protocol_version.clone())?)
     }
-}
-
-fn default_execution_version() -> u32 {
-    1
 }
 
 fn default_pubdata_mode() -> PubdataMode {
