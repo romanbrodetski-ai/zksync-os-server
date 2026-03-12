@@ -292,11 +292,15 @@ async fn build_external_config(repo: ConfigRepository<'_>) -> Config {
         .parse()
         .expect("Failed to parse sequencer config");
 
-    let l1_sender_config = repo
+    let mut l1_sender_config = repo
         .single::<L1SenderConfig>()
         .expect("Failed to load L1 sender config")
         .parse()
         .expect("Failed to parse L1 sender config");
+    if general_config.node_role.is_external() {
+        // This line just enforces that we expect no pubdata mode for external node.
+        l1_sender_config.pubdata_mode = None;
+    }
 
     let l1_watcher_config = repo
         .single::<L1WatcherConfig>()

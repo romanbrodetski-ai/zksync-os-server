@@ -506,10 +506,10 @@ pub struct L1SenderConfig {
     #[config(default_t = true)]
     pub enabled: bool,
 
-    /// Pubdata mode
-    #[config(default_t = PubdataMode::Blobs)]
+    /// Pubdata mode is used by block-producing components on the Main Node.
+    /// External Nodes only replay blocks, so they may leave this unset.
     #[config(with = Serde![str])]
-    pub pubdata_mode: PubdataMode,
+    pub pubdata_mode: Option<PubdataMode>,
 }
 
 #[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
