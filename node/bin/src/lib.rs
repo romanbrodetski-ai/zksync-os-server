@@ -721,6 +721,10 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     });
 
     if node_role.is_main() {
+        let external_price_api_client_config = config
+            .external_price_api_client_config
+            .clone()
+            .expect("external_price_api_client config must be set for Main Node");
         let mut base_token_price_updater = BaseTokenPriceUpdater::new(
             l1_state.diamond_proxy_l1.clone(),
             l1_provider.clone(),
@@ -728,7 +732,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
                 &config.base_token_price_updater_config,
                 &config.l1_sender_config,
             ),
-            config.external_price_api_client_config.clone().into(),
+            external_price_api_client_config.into(),
             token_price_sender,
         )
         .await

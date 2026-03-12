@@ -171,7 +171,7 @@ fn load_config_from_path(config_path: &Path) -> Config {
         gas_adjuster_config: Default::default(),
         batch_verification_config: Default::default(),
         base_token_price_updater_config: config_repo.single().unwrap().parse().unwrap(),
-        external_price_api_client_config: config_repo.single().unwrap().parse().unwrap(),
+        external_price_api_client_config: Some(config_repo.single().unwrap().parse().unwrap()),
         fee_config: Default::default(),
     }
 }

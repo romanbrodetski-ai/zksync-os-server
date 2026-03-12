@@ -352,11 +352,17 @@ async fn build_external_config(repo: ConfigRepository<'_>) -> Config {
         .parse()
         .expect("Failed to parse base token price updater config");
 
-    let external_price_api_client_config = repo
-        .single::<ExternalPriceApiClientConfig>()
-        .expect("Failed to load external price API client config")
-        .parse()
-        .expect("Failed to parse external price API client config");
+    // Parse this config only for Main Nodes. External Nodes never start the base token price updater.
+    let external_price_api_client_config = if general_config.node_role.is_main() {
+        Some(
+            repo.single::<ExternalPriceApiClientConfig>()
+                .expect("Failed to load external price API client config")
+                .parse()
+                .expect("Failed to parse external price API client config"),
+        )
+    } else {
+        None
+    };
 
     let fee_config = repo
         .single::<FeeConfig>()
