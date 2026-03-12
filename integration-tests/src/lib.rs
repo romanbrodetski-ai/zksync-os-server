@@ -234,11 +234,13 @@ impl Tester {
         let proof_storage_path = tempdir.path().join("proof_storage_path");
         let (stop_sender, stop_receiver) = watch::channel(false);
 
+        let default_config = load_chain_config(chain_layout);
+
         // Create a handle to run the sequencer in the background
         let general_config = GeneralConfig {
             rocks_db_path: rocks_db_path.clone(),
             l1_rpc_url: l1.address.clone(),
-            ..Default::default()
+            ..default_config.general_config
         };
         let sequencer_config = SequencerConfig {
             fee_collector_address: Address::random(),
@@ -283,8 +285,6 @@ impl Tester {
             enabled: true,
             address: status_address,
         };
-
-        let default_config = load_chain_config(chain_layout);
 
         let network_secret_key = zksync_os_network::rng_secret_key();
         let node_record = NodeRecord::from_secret_key(
