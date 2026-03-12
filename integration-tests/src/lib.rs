@@ -939,7 +939,7 @@ async fn download_prover_and_unpack(gpu: bool) -> String {
     };
 
     let local_binary_name = asset_name.trim_end_matches(".tar.gz");
-    let dir = Path::new("prover-binaries");
+    let dir = std::path::Path::new("prover-binaries");
     if !std::fs::exists(dir).expect("failed to check dir existence") {
         std::fs::create_dir_all(dir).expect("failed to create dir");
     }
@@ -1023,7 +1023,7 @@ async fn download_prover_and_unpack(gpu: bool) -> String {
 }
 
 #[cfg(feature = "prover-tests")]
-fn find_first_prover_binary(dir: &Path) -> Option<std::path::PathBuf> {
+fn find_first_prover_binary(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     for entry in std::fs::read_dir(dir).ok()? {
         let path = entry.ok()?.path();
         if path.is_dir() {
