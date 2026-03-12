@@ -87,7 +87,7 @@ pub(crate) fn seal_batch<ReadState: ReadStateHistory>(
         | ProvingVersion::V5 => {
             panic!("sealing batch with prover version v1-v5 is not supported");
         }
-        ProvingVersion::V6 => {
+        ProvingVersion::V6 | ProvingVersion::V7 => {
             // TODO: in the long-term we should generate proof input per batch
             generate_batch_proof_input(
                 blocks
