@@ -56,7 +56,7 @@ type TransactionReceiptFuture =
 ///   * Does not attempt to detect in-flight L1 transactions on startup - just crashes if they get mined
 ///
 /// Note: we pass `to_address` - L1 contract address to send transactions to.
-/// It differs between commit/prove/execute (e.g., timelock vs diamond proxy)
+/// It differs between commit/prove/execute (e.g., timelock vs diamond proxy).
 pub async fn run_l1_sender<Input: SendToL1>(
     // == plumbing ==
     mut inbound: PeekableReceiver<L1SenderCommand<Input>>,
