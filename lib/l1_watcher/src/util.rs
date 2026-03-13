@@ -553,16 +553,6 @@ mod tests {
         };
         let expected = bi.into_stored(&cb.protocol_version);
         let actual = cb.into_stored();
-        assert_eq!(actual.batch_number, expected.batch_number);
-        assert_eq!(actual.commitment, expected.commitment);
-        assert_eq!(actual.state_commitment, expected.state_commitment);
-        assert_eq!(
-            actual.priority_operations_hash,
-            expected.priority_operations_hash
-        );
-        assert_eq!(
-            actual.l2_to_l1_logs_root_hash,
-            expected.l2_to_l1_logs_root_hash
-        );
+        assert_eq!(actual, expected);
     }
 }
