@@ -54,7 +54,9 @@ impl fmt::Debug for BatchVerificationCommitInfo {
             .field("l2_da_commitment_scheme", &self.l2_da_commitment_scheme)
             .field("da_commitment", &self.da_commitment)
             .field("first_block_timestamp", &self.first_block_timestamp)
+            .field("first_block_number", &self.first_block_number)
             .field("last_block_timestamp", &self.last_block_timestamp)
+            .field("last_block_number", &self.last_block_number)
             .field("chain_id", &self.chain_id)
             // .field("operator_da_input", skipped to keep concise!)
             .finish()
@@ -75,11 +77,11 @@ impl From<CommitBatchInfo> for BatchVerificationCommitInfo {
             first_block_timestamp: value.first_block_timestamp,
             first_block_number: value
                 .first_block_number
-                .expect("wire v1 requires first_block_number"),
+                .expect("batch verification transport requires CommitBatchInfo.first_block_number"),
             last_block_timestamp: value.last_block_timestamp,
             last_block_number: value
                 .last_block_number
-                .expect("wire v1 requires last_block_number"),
+                .expect("batch verification transport requires CommitBatchInfo.last_block_number"),
             chain_id: value.chain_id,
             operator_da_input: value.operator_da_input,
         }

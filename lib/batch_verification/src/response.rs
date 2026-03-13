@@ -21,12 +21,17 @@ pub struct BatchVerificationResponseDecoder {
     inner: LengthDelimitedCodec,
 }
 
-impl BatchVerificationResponseDecoder {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
+impl Default for BatchVerificationResponseDecoder {
+    fn default() -> Self {
         Self {
             inner: LengthDelimitedCodec::new(),
         }
+    }
+}
+
+impl BatchVerificationResponseDecoder {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -52,12 +57,17 @@ pub struct BatchVerificationResponseCodec {
     inner: LengthDelimitedCodec,
 }
 
-impl BatchVerificationResponseCodec {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
+impl Default for BatchVerificationResponseCodec {
+    fn default() -> Self {
         Self {
             inner: LengthDelimitedCodec::new(),
         }
+    }
+}
+
+impl BatchVerificationResponseCodec {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
