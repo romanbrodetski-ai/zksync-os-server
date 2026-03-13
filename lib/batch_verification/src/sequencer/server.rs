@@ -98,20 +98,14 @@ impl BatchVerificationServer {
 
             tracing::info!("batch verification client connected");
 
-            let mut writer = FramedWrite::new(
-                tx,
-                BatchVerificationRequestCodec::new(),
-            );
+            let mut writer = FramedWrite::new(tx, BatchVerificationRequestCodec::new());
             let reader = StreamReader::new(
                 request
                     .into_body()
                     .into_data_stream()
                     .map_err(std::io::Error::other),
             );
-            let mut reader = FramedRead::new(
-                reader,
-                BatchVerificationResponseDecoder::new(),
-            );
+            let mut reader = FramedRead::new(reader, BatchVerificationResponseDecoder::new());
 
             // Handle bidirectional communication
             loop {

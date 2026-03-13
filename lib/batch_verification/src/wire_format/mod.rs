@@ -48,6 +48,6 @@ impl BatchVerificationResponse {
     pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
         let wire_format: v1::BatchVerificationResponseWireFormatV1 =
             bincode::decode_from_slice(bytes, bincode::config::standard())?.0;
-        Ok(wire_format.try_into()?)
+        wire_format.try_into()
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    BATCH_VERIFICATION_WIRE_FORMAT_VERSION, BatchVerificationRequest,
-    BatchVerificationResponse, BatchVerificationResult, wire_format::BatchVerificationCommitInfo,
+    BATCH_VERIFICATION_WIRE_FORMAT_VERSION, BatchVerificationRequest, BatchVerificationResponse,
+    BatchVerificationResult, wire_format::BatchVerificationCommitInfo,
 };
 use zksync_os_batch_types::BatchSignature;
 use zksync_os_contract_interface::models::{DACommitmentScheme, StoredBatchInfo};
