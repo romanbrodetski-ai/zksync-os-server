@@ -388,8 +388,9 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let ConsensusRuntimeParts {
         canonization_engine,
         leadership,
+        network_protocol,
+        bootstrapper,
         status,
-        ..
     } = if config.consensus_config.enabled {
         init_consensus(
             config
@@ -429,10 +430,16 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             },
             block_replay_storage.clone(),
             zk_provider_factory,
+            network_protocol.into_protocol_handler(),
         )
         .await
         .expect("failed to create network service");
         network_service.run(&mut tasks, stop_receiver.clone());
+
+        bootstrapper
+            .bootstrap_if_needed()
+            .await
+            .expect("failed to run raft bootstrap process");
     } else if node_role.is_main() {
         tracing::info!(
             "p2p networking is disabled; to enable set `network.enabled=true` and populate `network.secret_key`"

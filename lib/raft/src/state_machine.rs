@@ -15,7 +15,7 @@ use openraft::{
 use reth_network_peers::PeerId;
 use std::future::Future;
 use tokio::sync::mpsc;
-use zksync_os_consensus_types::{RaftNode, RaftTypeConfig, display_raft_entry};
+use zksync_os_consensus_types::{display_raft_entry, RaftNode, RaftTypeConfig};
 use zksync_os_rocksdb::RocksDB;
 use zksync_os_storage_api::ReplayRecord;
 
@@ -45,7 +45,10 @@ impl RaftStateMachineTrait<RaftTypeConfig> for RaftStateMachineStore {
         &mut self,
     ) -> impl Future<
         Output = Result<
-            (Option<LogId<PeerId>>, StoredMembership<PeerId, RaftNode>),
+            (
+                Option<LogId<PeerId>>,
+                StoredMembership<PeerId, RaftNode>,
+            ),
             StorageError<PeerId>,
         >,
     > + Send {
@@ -111,6 +114,9 @@ impl RaftStateMachineTrait<RaftTypeConfig> for RaftStateMachineStore {
             Ok(responses)
         }
     }
+
+    // Rest of the file only contains functions related to snapshots.
+    // We don't use the openraft's snapshot feature, so implementations are stubs and can be ignored.
 
     fn get_snapshot_builder(&mut self) -> impl Future<Output = Self::SnapshotBuilder> + Send {
         async move { NoopSnapshotBuilder }

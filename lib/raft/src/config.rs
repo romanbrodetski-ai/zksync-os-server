@@ -1,6 +1,6 @@
-use reth_network_peers::PeerId;
 use std::path::PathBuf;
 use std::time::Duration;
+use reth_network_peers::PeerId;
 
 #[derive(Clone, Debug)]
 pub struct RaftConsensusConfig {

@@ -4,8 +4,8 @@ mod status;
 use crate::health::health;
 use crate::status::status;
 
-use axum::{Router, routing::get};
 pub use status::{ConsensusStatus, StatusResponse};
+use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use tokio::{net::TcpListener, sync::watch};
 use zksync_os_raft::RaftConsensusStatus;

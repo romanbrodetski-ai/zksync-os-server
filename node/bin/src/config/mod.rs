@@ -21,8 +21,8 @@ use zksync_os_mempool::SubPoolLimit;
 use zksync_os_network::{NodeRecord, PeerId, SecretKey};
 use zksync_os_observability::LogFormat;
 use zksync_os_observability::opentelemetry::OpenTelemetryLevel;
-use zksync_os_operator_signer::SignerConfig;
 use zksync_os_raft::RaftConsensusConfig;
+use zksync_os_operator_signer::SignerConfig;
 use zksync_os_types::{NodeRole, PubdataMode};
 
 mod cli;
@@ -233,6 +233,11 @@ pub struct GeneralConfig {
     /// from scratch before turning this EN into a Main Node.
     #[config(default_t = true)]
     pub run_priority_tree: bool,
+
+    /// Whether to run the batcher/prover/L1 pipeline on a main node.
+    /// If false, the node will only run sequencer + tree components.
+    #[config(default_t = true)]
+    pub run_batcher_subsystem: bool,
 
     /// Enables ephemeral mode that isolates RocksDB into a temporary directory.
     /// The directory is removed once the process shuts down.
@@ -1238,7 +1243,7 @@ impl NetworkConfig {
             anyhow::anyhow!("`network.secret_key` is required for running p2p networking stack")
         })?;
         Ok(NodeRecord::from_secret_key(
-            // PeerId depends only on pubkey(secret_key); socket address is irrelevant here.
+            // PeerId depends only on pubkey(secret_key); socket address is in fact irrelevant here.
             SocketAddrV4::new(self.address, self.port).into(),
             secret_key,
         )

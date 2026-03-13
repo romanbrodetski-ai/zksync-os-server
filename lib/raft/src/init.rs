@@ -3,7 +3,7 @@ use crate::model::{
     BlockCanonizationEngine, ConsensusBootstrapper, ConsensusNetworkProtocol, ConsensusRole,
     ConsensusRuntimeParts, ConsensusStatusSource, LeadershipSignal, OpenRaftCanonizationEngine,
 };
-use crate::network::NoopNetworkFactory;
+use crate::network::{RaftNetworkFactory, RaftRpcHandler};
 use crate::state_machine::RaftStateMachineStore;
 use crate::status::RaftConsensusStatus;
 use crate::storage::RaftLogStore;
@@ -16,8 +16,9 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 use zksync_os_consensus_types::{RaftNode, RaftTypeConfig};
+use zksync_os_network::raft::protocol::RaftProtocolHandler;
+use zksync_os_network::raft::protocol::RaftRouter;
 use zksync_os_sequencer::execution::NoopCanonization;
-
 pub async fn init_consensus(config: RaftConsensusConfig) -> anyhow::Result<ConsensusRuntimeParts> {
     anyhow::ensure!(
         config.peer_ids.contains(&config.node_id),
@@ -25,6 +26,7 @@ pub async fn init_consensus(config: RaftConsensusConfig) -> anyhow::Result<Conse
         config.node_id
     );
 
+    let router = RaftRouter::default();
     let node_id = config.node_id;
     let raft_config = Config {
         cluster_name: "zksync-os-server".to_owned(),
@@ -46,13 +48,16 @@ pub async fn init_consensus(config: RaftConsensusConfig) -> anyhow::Result<Conse
         .iter()
         .map(|(id, node)| (*id, node.clone()))
         .collect::<BTreeMap<_, _>>();
+    let peer_ids: Vec<_> = membership_nodes.keys().copied().collect();
     tracing::info!(
         %node_id,
         peers_count = config.peer_ids.len(),
         bootstrap = config.bootstrap,
+        ?peer_ids,
         "creating openraft consensus"
     );
-    let network_factory = NoopNetworkFactory;
+    let network_factory = RaftNetworkFactory::new(router.clone(), &nodes, raft_config.as_ref())
+        .context("build raft network factory")?;
 
     let raft = Raft::new(
         config.node_id,
@@ -63,26 +68,6 @@ pub async fn init_consensus(config: RaftConsensusConfig) -> anyhow::Result<Conse
     )
     .await?;
     tracing::info!(%node_id, "openraft runtime created");
-
-    // Self-bootstrap: initialize cluster membership if needed.
-    if config.bootstrap && !raft.is_initialized().await? {
-        tracing::info!(
-            members_count = membership_nodes.len(),
-            "initializing raft membership (self-bootstrap)"
-        );
-        match raft.initialize(membership_nodes).await {
-            Ok(()) => {
-                tracing::info!("raft bootstrap completed");
-            }
-            Err(openraft::error::RaftError::APIError(
-                openraft::error::InitializeError::NotAllowed(_),
-            )) => {
-                tracing::info!("raft cluster became initialized meanwhile; skipping bootstrap");
-            }
-            Err(err) => return Err(err.into()),
-        }
-    }
-
     let (leader_tx, leader_rx) = watch::channel(ConsensusRole::Replica);
     let (status_tx, status_rx) = watch::channel(RaftConsensusStatus {
         node_id: node_id.to_string(),
@@ -93,6 +78,8 @@ pub async fn init_consensus(config: RaftConsensusConfig) -> anyhow::Result<Conse
         last_applied_index: None,
     });
     spawn_metrics_task(raft.clone(), node_id.to_string(), leader_tx, status_tx);
+    let rpc_handler = RaftRpcHandler::new(raft.clone());
+    let protocol_handler = RaftProtocolHandler::new(Arc::new(rpc_handler), router.clone());
 
     Ok(ConsensusRuntimeParts {
         canonization_engine: BlockCanonizationEngine::OpenRaft(OpenRaftCanonizationEngine {
@@ -100,8 +87,15 @@ pub async fn init_consensus(config: RaftConsensusConfig) -> anyhow::Result<Conse
             canonized_blocks_rx: canonized_rx,
         }),
         leadership: LeadershipSignal::Watch(leader_rx),
-        network_protocol: ConsensusNetworkProtocol::Disabled,
-        bootstrapper: ConsensusBootstrapper::Noop,
+        network_protocol: ConsensusNetworkProtocol::Raft(protocol_handler),
+        bootstrapper: ConsensusBootstrapper::Raft(crate::bootstrap::RaftBootstrapper {
+            raft: raft.clone(),
+            bootstrap: config.bootstrap,
+            router,
+            node_id,
+            peer_ids,
+            membership_nodes,
+        }),
         status: ConsensusStatusSource::Raft(status_rx),
     })
 }
@@ -179,7 +173,9 @@ fn spawn_metrics_task(
                         false
                     }
                     Err(_) => {
-                        tracing::warn!("OpenRaft leader confirmation timed out while state=Leader");
+                        tracing::warn!(
+                            "OpenRaft leader confirmation timed out while state=Leader"
+                        );
                         false
                     }
                 };

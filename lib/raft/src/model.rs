@@ -5,8 +5,9 @@ use tokio::sync::{mpsc, watch};
 use zksync_os_consensus_types::RaftTypeConfig;
 use zksync_os_sequencer::execution::{BlockCanonization, NoopCanonization};
 use zksync_os_storage_api::ReplayRecord;
-
+use crate::bootstrap::RaftBootstrapper;
 use crate::status::RaftConsensusStatus;
+use zksync_os_network::raft::protocol::RaftProtocolHandler;
 
 pub struct ConsensusRuntimeParts {
     pub canonization_engine: BlockCanonizationEngine,
@@ -88,16 +89,28 @@ impl LeadershipSignal {
 
 pub enum ConsensusNetworkProtocol {
     Disabled,
+    Raft(RaftProtocolHandler),
+}
+
+impl ConsensusNetworkProtocol {
+    pub fn into_protocol_handler(self) -> Option<RaftProtocolHandler> {
+        match self {
+            Self::Disabled => None,
+            Self::Raft(handler) => Some(handler),
+        }
+    }
 }
 
 pub enum ConsensusBootstrapper {
     Noop,
+    Raft(RaftBootstrapper),
 }
 
 impl ConsensusBootstrapper {
     pub async fn bootstrap_if_needed(&self) -> anyhow::Result<()> {
         match self {
             Self::Noop => Ok(()),
+            Self::Raft(bootstrapper) => bootstrapper.bootstrap_if_needed().await,
         }
     }
 }
