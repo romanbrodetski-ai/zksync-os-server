@@ -6,7 +6,7 @@ use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::{Log, Topic, ValueOrArray};
 use alloy::sol_types::SolEvent;
 use std::collections::HashMap;
-use zksync_os_batch_types::{BatchInfo, DiscoveredCommittedBatch};
+use zksync_os_batch_types::DiscoveredCommittedBatch;
 use zksync_os_contract_interface::IExecutor::{BlockExecution, ReportCommittedBatchRangeZKsyncOS};
 use zksync_os_contract_interface::ZkChain;
 use zksync_os_storage_api::{PersistedBatch, WriteBatch, WriteFinality};
@@ -82,13 +82,7 @@ impl<BatchStorage: WriteBatch, Finality: WriteFinality>
         let tx_hash = log.transaction_hash.expect("indexed log without tx hash");
         let committed_batch = util::fetch_commit_calldata(&self.zk_chain, tx_hash).await?;
 
-        // todo: stop using this struct once fully migrated from S3
-        let last_executed_batch_info = BatchInfo {
-            commit_info: committed_batch.commit_info,
-            upgrade_tx_hash: committed_batch.upgrade_tx_hash,
-            blob_sidecar: None,
-        };
-        let batch_info = last_executed_batch_info.into_stored(&committed_batch.protocol_version);
+        let batch_info = committed_batch.into_stored();
         Ok(DiscoveredCommittedBatch {
             batch_info,
             block_range: report.firstBlockNumber..=report.lastBlockNumber,

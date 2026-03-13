@@ -10,7 +10,7 @@ use backon::{ConstantBuilder, Retryable};
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
-use zksync_os_batch_types::{BatchInfo, DiscoveredCommittedBatch};
+use zksync_os_batch_types::DiscoveredCommittedBatch;
 use zksync_os_contract_interface::IExecutor::ReportCommittedBatchRangeZKsyncOS;
 use zksync_os_contract_interface::calldata::CommitCalldata;
 use zksync_os_contract_interface::models::{CommitBatchInfo, StoredBatchInfo};
@@ -309,13 +309,7 @@ pub async fn fetch_stored_batch_data(
     };
     let committed_batch = fetch_commit_calldata(zk_chain, tx_hash).await?;
 
-    // todo: stop using this struct once fully migrated from S3
-    let last_executed_batch_info = BatchInfo {
-        commit_info: committed_batch.commit_info,
-        upgrade_tx_hash: committed_batch.upgrade_tx_hash,
-        blob_sidecar: None,
-    };
-    let batch_info = last_executed_batch_info.into_stored(&committed_batch.protocol_version);
+    let batch_info = committed_batch.into_stored();
 
     Ok(Some(DiscoveredCommittedBatch {
         batch_info,
