@@ -1,0 +1,111 @@
+name: Update PR metadata
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-pr-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -ex {0}
+
+jobs:
+  generate-pr-metadata:
+    # Skip fork PRs for security.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate PR title and description with Claude
+        id: generate
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_ACCESS_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            REPO: ${{ github.repository }}
+            BASE BRANCH: ${{ github.event.pull_request.base.ref }}
+
+            ## Your task
+
+            You are updating the title and description of a GitHub pull request so it is ready to merge.
+            This repo uses squash merges — the PR title becomes the commit message on `main`.
+
+            Follow these steps in order:
+            1. Call `mcp__github__get_pull_request` to fetch the current title and body.
+            2. Call `mcp__github__list_pull_request_commits` to get all commit messages on the branch.
+            3. Call `mcp__github__get_pull_request_files` to get the changed files and diffs.
+            4. Decide on the final title and body (see rules below).
+            5. Call `mcp__github__update_pull_request` with the final title and body.
+
+            ## Title rules
+
+            PR titles MUST follow Conventional Commits: `<type>(<scope>): <short description>`
+            - Valid types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`, `build`
+            - Scope is the subsystem (e.g. `eth_sender`, `state_keeper`, `rpc`, `batcher`, `sequencer`)
+            - Keep it under 72 characters
+            - Use `feat!:` or `fix!:` (with exclamation mark) if the change is BREAKING (see definition below)
+
+            Examples of valid titles from this repo:
+            - `feat(eth_sender): support new transaction type`
+            - `fix(state_keeper): correctly handle edge case`
+            - `ci: add new workflow for linting`
+            - `feat!(rpc): rename config key requires redeployment`
+
+            **IMPORTANT: Only update the title if the existing title does NOT already match
+            Conventional Commits format (`type(scope): description` or `type: description`).
+            If it already matches, leave it exactly as-is.**
+
+            ## Body rules
+
+            Always rewrite the body. Start with:
+
+            ```
+            ## Summary
+
+            <2-4 sentences: what changed, why, any important implementation notes>
+            ```
+
+            Preserve useful content the author already wrote in the existing body.
+
+            If the change is NOT breaking, `## Summary` is the entire body.
+
+            If the change IS breaking, append these two sections as real Markdown headings
+            (write them as `##` headings directly — NOT inside `<!-- HTML comments -->`):
+
+            ```
+            ## Breaking Changes
+
+            - Who is affected (e.g. EN users, main node operators)
+            - What exactly is breaking (changed DB schema, wire format, config key, L1 contract)
+            - Migration steps required for consumers
+            - Links to docs / migration guides if applicable
+
+            ## Rollout Instructions
+
+            - Order of operations (e.g. deploy sequencer before EN)
+            - Monitoring / alerting to watch during rollout
+            - Rollback plan
+            ```
+
+            ## Breaking change definition
+
+            A change is BREAKING if ALL of the following are true:
+            - It requires additional actions during deployment (new required env var, DB migration,
+              config key rename, wire format change, L1 contract upgrade, changed RPC interface)
+            - It is not backward compatible with currently deployed instances
+
+            A change is NOT breaking if it only affects:
+            - Local development setup or local chain configuration
+            - Test helpers or test configuration
+            - Documentation or comments
+            - Internal refactoring with no external interface changes
+            - CI/CD configuration
+          claude_args: "--allowedTools 'mcp__github__get_pull_request,mcp__github__list_pull_request_commits,mcp__github__get_pull_request_files,mcp__github__update_pull_request' --max-turns 10"
