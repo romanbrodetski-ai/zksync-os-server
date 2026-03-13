@@ -304,6 +304,7 @@ impl Tester {
         let mut config = Config {
             general_config,
             network_config,
+            consensus_config: Default::default(),
             genesis_config: default_config.genesis_config.clone(),
             rpc_config,
             mempool_config: Default::default(),
