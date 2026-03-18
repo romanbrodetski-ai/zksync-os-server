@@ -55,7 +55,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 use zksync_os_base_token_adjuster::BaseTokenPriceUpdater;
 use zksync_os_batch_verification::{BatchVerificationClient, BatchVerificationPipelineStep};
-use zksync_os_contract_interface::l1_discovery::{BatchVerificationSL, L1State};
+use zksync_os_contract_interface::l1_discovery::L1State;
 use zksync_os_contract_interface::models::BatchDaInputMode;
 use zksync_os_gas_adjuster::GasAdjuster;
 use zksync_os_genesis::{FileGenesisInputSource, Genesis, GenesisInputSource};
@@ -67,8 +67,8 @@ use zksync_os_l1_sender::commands::prove::ProofCommand;
 use zksync_os_l1_sender::pipeline_component::L1Sender;
 use zksync_os_l1_sender::upgrade_gatekeeper::UpgradeGatekeeper;
 use zksync_os_l1_watcher::{
-    CommittedBatchProvider, GatewayMigrationWatcher, L1CommitWatcher, L1ExecuteWatcher,
-    L1TxWatcher, L1UpgradeTxWatcher,
+    CommittedBatchProvider, Gateway, GatewayMigrationWatcher, L1, L1CommitWatcher,
+    L1ExecuteWatcher, L1TxWatcher, L1UpgradeTxWatcher,
 };
 use zksync_os_l1_watcher::{InteropWatcher, L1PersistBatchWatcher};
 use zksync_os_mempool::Pool;
@@ -85,7 +85,8 @@ use zksync_os_network::service::{NetworkService, ZksProtocolConfig};
 use zksync_os_observability::GENERAL_METRICS;
 use zksync_os_pipeline::Pipeline;
 use zksync_os_raft::{
-    BlockCanonizationEngine, ConsensusRuntimeParts, LeadershipSignal, loopback_consensus,
+    BlockCanonizationEngine, ConsensusRuntimeParts, LeadershipSignal, init_consensus,
+    loopback_consensus,
 };
 use zksync_os_reth_compat::provider::ZkProviderFactory;
 use zksync_os_revm_consistency_checker::node::RevmConsistencyChecker;
@@ -104,11 +105,12 @@ use zksync_os_storage_api::{
     WriteReplay, WriteRepository, WriteState,
 };
 use zksync_os_types::{
-    ExecutionVersion, InteropRootsLogIndex, ProtocolSemanticVersion, PubdataMode,
-    TransactionAcceptanceState, UpgradeInfo, UpgradeMetadata,
+    InteropRootsLogIndex, ProtocolSemanticVersion, PubdataMode, TransactionAcceptanceState,
+    UpgradeInfo, UpgradeMetadata,
 };
 
 const BLOCK_REPLAY_WAL_DB_NAME: &str = "block_replay_wal";
+const RAFT_DB_NAME: &str = "raft";
 const STATE_TREE_DB_NAME: &str = "tree";
 const PRIORITY_TREE_DB_NAME: &str = "priority_txs_tree";
 const REPOSITORY_DB_NAME: &str = "repository";
@@ -218,41 +220,29 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     };
     tracing::info!(?l1_state, "L1 state");
     l1_state.report_metrics();
-    if node_role.is_main() {
-        check_batch_verification_mismatch(
-            &config.batch_verification_config,
-            &l1_state.batch_verification,
-        );
-    }
 
-    if node_role.is_main() {
-        let pubdata_mode = config
-            .l1_sender_config
-            .pubdata_mode
-            .expect("l1_sender_pubdata_mode must be set on the Main Node");
-        match (pubdata_mode, l1_state.da_input_mode) {
-            (
-                PubdataMode::Calldata | PubdataMode::Blobs | PubdataMode::RelayedL2Calldata,
-                BatchDaInputMode::Validium,
-            )
-            | (PubdataMode::Validium, BatchDaInputMode::Rollup) => {
-                panic!(
-                    "Pubdata mode doesn't correspond to pricing mode from the l1. \
-                    L1 mode: {:?}, configured pubdata mode: {:?}",
-                    l1_state.da_input_mode, pubdata_mode
-                );
-            }
-            _ => {}
-        };
-        if let (PubdataMode::Blobs | PubdataMode::Calldata, true) = (
-            pubdata_mode,
-            config.general_config.gateway_rpc_url.is_some(),
-        ) {
+    match (config.l1_sender_config.pubdata_mode, l1_state.da_input_mode) {
+        (
+            PubdataMode::Calldata | PubdataMode::Blobs | PubdataMode::RelayedL2Calldata,
+            BatchDaInputMode::Validium,
+        )
+        | (PubdataMode::Validium, BatchDaInputMode::Rollup) => {
             panic!(
-                "Pubdata mode {:?} cannot be used when settling on Gateway",
-                pubdata_mode
+                "Pubdata mode doesn't correspond to pricing mode from the l1. \
+                L1 mode: {:?}, configured pubdata mode: {:?}",
+                l1_state.da_input_mode, config.l1_sender_config.pubdata_mode
             );
         }
+        _ => {}
+    };
+    if let (PubdataMode::Blobs | PubdataMode::Calldata, true) = (
+        config.l1_sender_config.pubdata_mode,
+        config.general_config.gateway_rpc_url.is_some(),
+    ) {
+        panic!(
+            "Pubdata mode {:?} cannot be used when settling on Gateway",
+            config.l1_sender_config.pubdata_mode
+        );
     }
 
     let genesis = Genesis::new(
@@ -295,7 +285,6 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         .root_info()
         .expect("Failed to get genesis root info");
     let tree_db = tree_at_genesis.tree;
-    let tree_for_rpc = Arc::new(tree_db.clone());
 
     // todo: this can take a while; ideally committed batches should be loaded in the background
     //       and then `get()` method can be made async so that it waits for relevant batch to load
@@ -399,8 +388,27 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let ConsensusRuntimeParts {
         canonization_engine,
         leadership,
-        ..
-    } = loopback_consensus();
+        network_protocol,
+        bootstrapper,
+        status,
+    } = if config.consensus_config.enabled {
+        init_consensus(
+            config
+                .consensus_config
+                .clone()
+                .into_raft_consensus_config(
+                    &config.network_config,
+                    config.general_config.rocks_db_path.join(RAFT_DB_NAME),
+                )
+                .expect("failed to build raft consensus config"),
+            Box::new(block_replay_storage.clone()),
+        )
+        .await
+        .expect("failed to initialize consensus engine")
+    } else {
+        tracing::info!("openraft consensus is disabled - assuming perpetual leader role");
+        loopback_consensus()
+    };
     if config.network_config.enabled {
         tracing::info!("initializing p2p networking");
 
@@ -423,10 +431,16 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             },
             block_replay_storage.clone(),
             zk_provider_factory,
+            network_protocol.into_protocol_handler(),
         )
         .await
         .expect("failed to create network service");
         network_service.run(&mut tasks, stop_receiver.clone());
+
+        bootstrapper
+            .bootstrap_if_needed()
+            .await
+            .expect("failed to run raft bootstrap process");
     } else if node_role.is_main() {
         tracing::info!(
             "p2p networking is disabled; to enable set `network.enabled=true` and populate `network.secret_key`"
@@ -497,21 +511,6 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         &genesis.genesis_upgrade_tx().await.protocol_version
     };
 
-    if config
-        .sequencer_config
-        .tx_validator
-        .deployment_filter
-        .enabled
-    {
-        let exec_version = ExecutionVersion::try_from(current_protocol_version)
-            .expect("Cannot determine execution version");
-        assert!(
-            exec_version >= ExecutionVersion::V6,
-            "Deployment filter requires execution version V6 or later (protocol >= v31.0), \
-             but current protocol version {current_protocol_version} uses {exec_version:?}"
-        );
-    }
-
     let upgrade_subpool = UpgradeSubpool::new(current_protocol_version.clone());
     let sl_chain_id_subpool = SlChainIdSubpool::default();
     let interop_fee_subpool = InteropFeeSubpool::new(next_interop_fee_number);
@@ -534,36 +533,56 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         upgrade_subpool.insert(upgrade_tx).await;
     }
 
-    if current_protocol_version >= &ProtocolSemanticVersion::new(0, 31, 0) {
+    if current_protocol_version >= &ProtocolSemanticVersion::new(0, 31, 0)
+        && config.general_config.gateway_rpc_url.is_some()
+    {
         tasks.spawn(
-            GatewayMigrationWatcher::create_watcher(
-                node_startup_state.l1_state.diamond_proxy_l1.clone(),
-                node_startup_state.l1_state.bridgehub_l1.clone(),
-                chain_id,
-                node_startup_state.l1_state.l1_chain_id,
-                config.general_config.gateway_chain_id,
-                next_migration_number,
+            InteropWatcher::create_watcher(
+                node_startup_state.l1_state.bridgehub_sl.clone(), // TODO: what bridgehub to use here?
                 config.l1_watcher_config.clone().into(),
-                sl_chain_id_subpool.clone(),
+                next_interop_event_index.clone(),
+                interop_roots_subpool.clone(),
             )
             .await
-            .expect("failed to start gateway migration watcher")
+            .expect("failed to start L1 interop roots watcher")
             .run()
-            .map(report_exit("gateway migration watcher")),
+            .map(report_exit("L1 interop roots watcher")),
         );
+    }
 
-        if config.general_config.gateway_rpc_url.is_some() {
+    if current_protocol_version >= &ProtocolSemanticVersion::new(0, 31, 0)
+        && config.l1_watcher_config.enable_gw_migration_watcher
+    {
+        // in case l1 chain id is not equal to sl chain id(which indicates we are currently settling on GW), we watch for migration events of type GW -> L1, and L1 -> GW otherwise.
+        if node_startup_state.l1_state.l1_chain_id != node_startup_state.l1_state.sl_chain_id {
             tasks.spawn(
-                InteropWatcher::create_watcher(
+                GatewayMigrationWatcher::<Gateway>::create_watcher(
+                    node_startup_state.l1_state.diamond_proxy_sl.clone(),
                     node_startup_state.l1_state.bridgehub_sl.clone(),
+                    chain_id,
+                    next_migration_number,
                     config.l1_watcher_config.clone().into(),
-                    next_interop_event_index.clone(),
-                    interop_roots_subpool.clone(),
+                    sl_chain_id_subpool.clone(),
                 )
                 .await
-                .expect("failed to start L1 interop roots watcher")
+                .expect("failed to start L1 chain id update watcher")
                 .run()
-                .map(report_exit("L1 interop roots watcher")),
+                .map(report_exit("L1 chain id update watcher")),
+            );
+        } else {
+            tasks.spawn(
+                GatewayMigrationWatcher::<L1>::create_watcher(
+                    node_startup_state.l1_state.diamond_proxy_sl.clone(),
+                    node_startup_state.l1_state.bridgehub_sl.clone(),
+                    chain_id,
+                    next_migration_number,
+                    config.l1_watcher_config.clone().into(),
+                    sl_chain_id_subpool.clone(),
+                )
+                .await
+                .expect("failed to start L1 chain id update watcher")
+                .run()
+                .map(report_exit("L1 chain id update watcher")),
             );
         }
     }
@@ -611,13 +630,9 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     // Channel for Batcher->GasAdjuster communication. Batcher send sidecar to gas adjuster to estimate blob fill ratio.
     let (sidecar_sender, sidecar_receiver) = tokio::sync::mpsc::channel(10);
     if node_role.is_main() {
-        let pubdata_mode = config
-            .l1_sender_config
-            .pubdata_mode
-            .expect("l1_sender_pubdata_mode must be set on the Main Node");
         let gas_adjuster_config = gas_adjuster_config(
             config.gas_adjuster_config.clone(),
-            pubdata_mode,
+            config.l1_sender_config.pubdata_mode,
             config.l1_sender_config.max_priority_fee_per_gas.0,
         );
         let gas_adjuster = GasAdjuster::new(
@@ -733,13 +748,13 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         finality_storage.clone(),
         persistent_batch_storage.clone(),
         state.clone(),
-        tree_for_rpc,
     );
     tasks.spawn(
         L1PersistBatchWatcher::create_watcher(
             config.l1_watcher_config.clone().into(),
             node_startup_state.l1_state.diamond_proxy_sl.clone(),
             persistent_batch_storage.clone(),
+            finality_storage.clone(),
         )
         .await
         .expect("failed to start L1 batch persist watcher")
@@ -764,30 +779,14 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     });
 
     if node_role.is_main() {
-        let external_price_api_client_config = config
-            .external_price_api_client_config
-            .clone()
-            .expect("external_price_api_client config must be set for Main Node");
-        let gateway_diamond_proxy = if l1_state.l1_chain_id != l1_state.sl_chain_id {
-            Some(
-                l1_state
-                    .bridgehub_l1
-                    .zk_chain_by_chain_id(l1_state.sl_chain_id)
-                    .await
-                    .expect("Failed to get gateway_diamond_proxy"),
-            )
-        } else {
-            None
-        };
         let mut base_token_price_updater = BaseTokenPriceUpdater::new(
             l1_state.diamond_proxy_l1.clone(),
-            gateway_diamond_proxy,
             l1_provider.clone(),
             base_token_price_updater_config(
                 &config.base_token_price_updater_config,
                 &config.l1_sender_config,
             ),
-            external_price_api_client_config.into(),
+            config.external_price_api_client_config.clone().into(),
             token_price_sender,
         )
         .await
@@ -881,6 +880,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             run_status_server(
                 config.status_server_config.address.clone(),
                 stop_receiver.clone(),
+                status.into_raft_status_rx(),
             )
             .map(report_exit("Status server")),
         );
@@ -934,10 +934,6 @@ async fn run_main_node_pipeline(
     canonization_engine: BlockCanonizationEngine,
     leadership: LeadershipSignal,
 ) {
-    let pubdata_mode = config
-        .l1_sender_config
-        .pubdata_mode
-        .expect("l1_sender_pubdata_mode must be set on the Main Node");
     let priority_tree_db_path = config
         .general_config
         .rocks_db_path
@@ -994,6 +990,7 @@ async fn run_main_node_pipeline(
                 }),
         )
         .pipe(TreeManager { tree: tree.clone() });
+
     tracing::info!("Initializing ProofStorage");
     let proof_storage = ProofStorage::new(config.prover_api_config.proof_storage.clone())
         .await
@@ -1039,8 +1036,9 @@ async fn run_main_node_pipeline(
             maximum_in_flight_blocks: config
                 .prover_input_generator_config
                 .maximum_in_flight_blocks,
+            app_bin_base_path: config.general_config.rocks_db_path.join("app_bins").clone(),
             read_state: state.clone(),
-            pubdata_mode,
+            pubdata_mode: config.l1_sender_config.pubdata_mode,
         })
         .pipe(Batcher {
             startup_config: BatcherStartupConfig {
@@ -1053,7 +1051,7 @@ async fn run_main_node_pipeline(
             chain_address_sl: node_state_on_startup.l1_state.diamond_proxy_address_sl(),
             pubdata_limit_bytes: config.sequencer_config.block_pubdata_limit_bytes,
             batcher_config: config.batcher_config.clone(),
-            pubdata_mode,
+            pubdata_mode: config.l1_sender_config.pubdata_mode,
             sidecar_sender,
             committed_batch_provider: committed_batch_provider.clone(),
             read_state: state.clone(),
@@ -1245,37 +1243,6 @@ fn init_and_report_internal_config_manager(
         .set(internal_config.l2_signer_blacklist.len());
 
     internal_config_manager
-}
-
-/// Warns when the main node's batch verification server threshold is lower than the
-/// threshold configured on L1.
-///
-/// This is a startup sanity check only: the pipeline later enforces the effective threshold by
-/// taking the max(server.threshold, l1.threshold).
-///
-/// In practice, it means that the server operator expectation and the L1 state are mismatched.
-fn check_batch_verification_mismatch(
-    server_config: &config::BatchVerificationConfig,
-    l1_config: &BatchVerificationSL,
-) -> bool {
-    if !server_config.server_enabled {
-        return false;
-    }
-
-    let l1_threshold = match l1_config {
-        BatchVerificationSL::Enabled(config) => config.threshold,
-        BatchVerificationSL::Disabled => return false,
-    };
-
-    if server_config.threshold < l1_threshold {
-        tracing::warn!(
-            configured_threshold = server_config.threshold,
-            l1_threshold,
-            "Batch verification server threshold is lower than the L1 threshold; consider increasing the server threshold"
-        );
-        return true;
-    }
-    false
 }
 
 async fn commit_proof_execute_block_numbers(
@@ -1487,76 +1454,4 @@ async fn find_last_matching_main_node_block(
         }
     }
     Ok(left)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::check_batch_verification_mismatch;
-    use crate::config::BatchVerificationConfig;
-    use alloy::primitives::address;
-    use zksync_os_contract_interface::l1_discovery::{
-        BatchVerificationSL, BatchVerificationSLConfig,
-    };
-
-    #[test]
-    fn test_batch_verification_is_disabled_on_server() {
-        let server_config = BatchVerificationConfig::default();
-        let l1_config = BatchVerificationSL::Enabled(BatchVerificationSLConfig {
-            threshold: 0,
-            validators: vec![address!("0x0000000000000000000000000000000000000001")],
-        });
-        let warned = check_batch_verification_mismatch(&server_config, &l1_config);
-        assert!(!warned);
-    }
-
-    #[test]
-    fn test_batch_verification_is_disabled_on_l1() {
-        let config = BatchVerificationConfig {
-            server_enabled: true,
-            ..Default::default()
-        };
-        let warned = check_batch_verification_mismatch(&config, &BatchVerificationSL::Disabled);
-        assert!(!warned);
-    }
-
-    #[test]
-    fn test_batch_verification_is_mismatched() {
-        let server_config = BatchVerificationConfig {
-            server_enabled: true,
-            threshold: 2,
-            ..Default::default()
-        };
-        let l1_config = BatchVerificationSL::Enabled(BatchVerificationSLConfig {
-            threshold: 3,
-            validators: vec![
-                address!("0x0000000000000000000000000000000000000001"),
-                address!("0x0000000000000000000000000000000000000002"),
-                address!("0x0000000000000000000000000000000000000003"),
-                address!("0x0000000000000000000000000000000000000004"),
-            ],
-        });
-        let warned = check_batch_verification_mismatch(&server_config, &l1_config);
-
-        assert!(warned);
-    }
-
-    #[test]
-    fn test_batch_verification_happy_path() {
-        let server_config = BatchVerificationConfig {
-            server_enabled: true,
-            threshold: 3,
-            ..Default::default()
-        };
-        let l1_config = BatchVerificationSL::Enabled(BatchVerificationSLConfig {
-            threshold: 2,
-            validators: vec![
-                address!("0x0000000000000000000000000000000000000001"),
-                address!("0x0000000000000000000000000000000000000002"),
-                address!("0x0000000000000000000000000000000000000003"),
-            ],
-        });
-        let warned = check_batch_verification_mismatch(&server_config, &l1_config);
-
-        assert!(!warned);
-    }
 }

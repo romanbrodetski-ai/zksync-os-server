@@ -168,7 +168,6 @@ impl OverrideProvider for Arc<BTreeMap<BlockNumber, BlockOverlay>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::Address;
     use zksync_os_interface::types::StorageWrite;
 
     #[test]
@@ -189,8 +188,6 @@ mod tests {
                 vec![StorageWrite {
                     key: key1,
                     value: old_value,
-                    account: Address::ZERO,
-                    account_key: B256::ZERO,
                 }],
                 vec![],
             )
@@ -204,14 +201,10 @@ mod tests {
                     StorageWrite {
                         key: key1,
                         value: new_value,
-                        account: Address::ZERO,
-                        account_key: B256::ZERO,
                     },
                     StorageWrite {
                         key: key2,
                         value: another_value,
-                        account: Address::ZERO,
-                        account_key: B256::ZERO,
                     },
                 ],
                 vec![],
@@ -257,8 +250,6 @@ mod tests {
                     vec![StorageWrite {
                         key,
                         value: B256::from([block_num as u8; 32]),
-                        account: Address::ZERO,
-                        account_key: B256::ZERO,
                     }],
                     vec![],
                 )

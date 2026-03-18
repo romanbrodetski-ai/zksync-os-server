@@ -10,7 +10,6 @@ use std::pin::Pin;
 use tokio::time::Sleep;
 use vise::EncodeLabelValue;
 use zksync_os_interface::error::InvalidTransaction;
-use zksync_os_interface::tracing::{AnyTracer, AnyTxValidator};
 use zksync_os_interface::types::{BlockContext, BlockOutput};
 use zksync_os_metadata::NODE_SEMVER_VERSION;
 use zksync_os_observability::ComponentStateHandle;
@@ -26,8 +25,6 @@ pub async fn execute_block_in_vm<V: ViewState>(
     mut command: PreparedBlockCommand<'_>,
     state_view: V,
     latency_tracker: &ComponentStateHandle<SequencerState>,
-    tracer: impl AnyTracer + Send + 'static,
-    validator: impl AnyTxValidator + Send + 'static,
 ) -> Result<
     (
         BlockOutput,
@@ -50,7 +47,7 @@ pub async fn execute_block_in_vm<V: ViewState>(
         component_state_tracker: latency_tracker.clone(),
         state_view: state_view_with_force_preimages,
     };
-    let mut runner = VmWrapper::new(ctx, metered_state_view, tracer, validator);
+    let mut runner = VmWrapper::new(ctx, metered_state_view);
 
     let mut executed_txs = Vec::<ZkTransaction>::new();
     let mut cumulative_gas_used = 0u64;
@@ -157,20 +154,6 @@ pub async fn execute_block_in_vm<V: ViewState>(
                         executed_txs.push(tx);
                         cumulative_gas_used += res.gas_used;
                         if tx_type == ZkTxType::Upgrade {
-                            if !res.status {
-                                let tx_hash = executed_txs.last().unwrap().hash();
-                                tracing::error!(
-                                    block_number = ctx.block_number,
-                                    ?tx_hash,
-                                    revert_output = ?res.output,
-                                    "Upgrade transaction reverted"
-                                );
-                                return Err(BlockDump {
-                                    ctx,
-                                    txs: all_processed_txs.clone(),
-                                    error: format!("upgrade tx {tx_hash} reverted"),
-                                });
-                            }
                             match &command.seal_policy {
                                 SealPolicy::Decide(..) | SealPolicy::UntilExhausted { allowed_to_finish_early: true } => {
                                     tracing::debug!(block_number = ctx.block_number, "sealing block as upgrade tx was executed");
@@ -340,26 +323,31 @@ pub async fn execute_block_in_vm<V: ViewState>(
         .computational_native_used_per_block
         .observe(output.computational_native_used);
 
+    let block_hash_output = hash_block_output(&output);
+
     tracing::info!(
         block_number = output.header.number,
-        command = command.metrics_label,
-        ?seal_reason,
-        tx_count = executed_txs.len(),
-        storage_writes = output.storage_writes.len(),
-        preimages = output.published_preimages.len(),
-        pubdata_bytes = output.pubdata.len(),
+        "Block {} ({}) sealed because of {seal_reason:?} in block executor with {} transactions ({} purged) and {} gas. \
+        Block hash output: {block_hash_output:?}, canonical hash: {:?}. \
+        storage_writes: {}, preimages: {}, pubdata bytes: {}. \
+        ",
+        output.header.number,
+        command.metrics_label,
+        executed_txs.len(),
+        purged_txs.len(),
         cumulative_gas_used,
-        purged_txs_len = purged_txs.len(),
-        "Block sealed in block executor"
+        output.header.hash(),
+        output.storage_writes.len(),
+        output.published_preimages.len(),
+        output.pubdata.len(),
     );
 
     tracing::debug!(
         output = ?BlockOutputDebug(&output),
         block_number = output.header.number,
-        "Block output"
+        "Full block {} output",
+        output.header.number,
     );
-
-    let block_hash_output = hash_block_output(&output);
 
     // Check if the block output matches the expected hash.
     if let Some(expected_hash) = command.expected_block_output_hash
