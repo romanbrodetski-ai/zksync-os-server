@@ -147,17 +147,6 @@ jobs:
       - name: Check that replay wire format version is set correctly
         shell: bash
         run: |
-          normalize_wire_file() {
-            local input_file="$1"
-            local output_file="$2"
-            # Ignore comment-only/documentation-only edits. Code and inline comments remain checked.
-            awk '
-              /^[[:space:]]*\/\// { next }
-              /^[[:space:]]*$/ { next }
-              { print }
-            ' "$input_file" > "$output_file"
-          }
-
           # get latest tag (latest release)
           TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
 
@@ -166,9 +155,7 @@ jobs:
           git fetch --depth=1 origin tag "$TAG"
           for FILE in "$DIR"/v*.rs; do
             if git show "$TAG:$FILE" > /tmp/old_wire_format.rs 2>/dev/null; then
-              normalize_wire_file /tmp/old_wire_format.rs /tmp/old_wire_format.normalized.rs
-              normalize_wire_file "$FILE" /tmp/new_wire_format.normalized.rs
-              if ! diff -q /tmp/old_wire_format.normalized.rs /tmp/new_wire_format.normalized.rs; then
+              if ! diff -q /tmp/old_wire_format.rs "$FILE"; then
                 echo "Change detected in already released wire format: $FILE"
                 exit 1
               fi
