@@ -2,9 +2,6 @@
 //! stable unique ID for a type, so instead we define it in this separate file.
 //!
 //! Do not change this file under any circumstances. Copy it instead. May be deleted when obsolete.
-//! `BlockStartCursors` was introduced in the internal model/storage layer to group the replay
-//! cursor fields, but the wire representation did not change. Because this version still encodes
-//! the same payload shape, that refactor did not require introducing `v3`.
 
 // Difference from v1:
 // - Added `starting_migration_number` field to `ReplayRecord`.
