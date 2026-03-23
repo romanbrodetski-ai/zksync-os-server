@@ -39,6 +39,7 @@ use zksync_os_server::default_protocol_version::{
     NEXT_PROTOCOL_VERSION, PROTOCOL_VERSION, PROTOCOL_VERSION_V31_0,
 };
 use zksync_os_state_full_diffs::FullDiffsState;
+use zksync_os_status_server::StatusResponse;
 use zksync_os_types::{
     L1PriorityTxType, L1TxType, NodeRole, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE,
 };
@@ -48,6 +49,7 @@ pub mod config;
 pub mod contracts;
 pub mod dyn_wallet_provider;
 mod network;
+pub mod multi_node;
 mod node_log;
 mod prover_tester;
 pub mod provider;
@@ -146,7 +148,7 @@ pub struct Tester {
 
     pub prover_tester: ProverTester,
 
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     config: Config,
 
     #[allow(dead_code)]
@@ -156,6 +158,7 @@ pub struct Tester {
     node_record: NodeRecord,
     l2_rpc_address: String,
     batch_verification_url: String,
+    status_server_url: String,
     gateway_rpc_url: Option<String>,
     sl_provider: EthDynProvider,
     log_state: NodeLogState,
@@ -224,6 +227,13 @@ impl Tester {
         HttpRpcRecorder::start_http("l2", self.l2_http_rpc_url(), config)
     }
 
+    pub async fn status(&self) -> anyhow::Result<StatusResponse> {
+        let response = reqwest::get(format!("{}/status", self.status_server_url))
+            .await?
+            .error_for_status()?;
+        Ok(response.json::<StatusResponse>().await?)
+    }
+
     pub async fn launch_external_node(&self) -> anyhow::Result<Self> {
         // Due to type inference issue, we need to specify None type here and this whole function if a de-facto helper for this
         self.launch_external_node_inner(None::<fn(&mut Config)>)
@@ -278,9 +288,34 @@ impl Tester {
         self,
         config_overrides: impl FnOnce(&mut Config),
     ) -> anyhow::Result<Self> {
-        // Drop all fields that might rely on node being alive (e.g. alloy provider that uses RPC).
+        self.suspend().await.resume_with_overrides(config_overrides).await
+    }
+
+    /// Gracefully shut down the node, retaining its state (database, config, L1) so it can be
+    /// resumed later via [`Self::resume`]. The returned `Tester` is in a suspended state —
+    /// do not call RPC methods on it until resumed.
+    pub async fn suspend(mut self) -> Self {
+        let runtime = self.runtime.take().expect("node is already suspended");
+        if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
+            panic!("node failed to shutdown in time");
+        }
+        drop(runtime);
+        wait_for_network_port_release(self.config.network_config.port).await;
+        self
+    }
+
+    /// Resume a suspended node, reconnecting providers to the restarted process.
+    pub async fn resume(self) -> anyhow::Result<Self> {
+        self.resume_with_overrides(|_| {}).await
+    }
+
+    /// Resume a suspended node with additional config overrides.
+    pub async fn resume_with_overrides(
+        self,
+        config_overrides: impl FnOnce(&mut Config),
+    ) -> anyhow::Result<Self> {
+        assert!(self.runtime.is_none(), "node is not suspended");
         let Self {
-            runtime,
             l1,
             config,
             tempdir,
@@ -290,11 +325,6 @@ impl Tester {
         } = self;
         let mut config = config.clone();
         config_overrides(&mut config);
-        if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
-            panic!("node failed to shutdown in time");
-        }
-        drop(runtime);
-        wait_for_network_port_release(config.network_config.port).await;
         Self::launch_node_inner(
             l1,
             config,
@@ -303,6 +333,20 @@ impl Tester {
             chain_layout,
         )
         .await
+    }
+
+    /// Returns `true` if the node is currently suspended (shut down but retaining state).
+    pub fn is_suspended(&self) -> bool {
+        self.runtime.is_none()
+    }
+
+    /// Gracefully shut down the node.
+    pub async fn shutdown(self) -> anyhow::Result<()> {
+        let runtime = self.runtime.expect("node is already suspended");
+        if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
+            panic!("node failed to shutdown in time");
+        }
+        Ok(())
     }
 
     async fn launch_node(
@@ -382,7 +426,7 @@ impl Tester {
         };
         let status_server_config = StatusServerConfig {
             enabled: true,
-            address: status_address,
+            address: status_address.clone(),
         };
         let network_secret_key = zksync_os_network::rng_secret_key();
         let network_config = NetworkConfig {
@@ -397,6 +441,7 @@ impl Tester {
         Ok(Config {
             general_config,
             network_config,
+            consensus_config: Default::default(),
             genesis_config: default_config.genesis_config,
             rpc_config,
             mempool_config: default_config.mempool_config,
@@ -435,6 +480,7 @@ impl Tester {
         let l2_rpc_address = config.rpc_config.address.clone();
         let l2_rpc_ws_url = format!("ws://localhost:{}", parse_local_port(&l2_rpc_address)?);
         let batch_verification_url = config.batch_verification_config.connect_address.clone();
+        let status_server_url = config.status_server_config.address.replace("0.0.0.0:", "http://localhost:");
 
         let network_secret_key = config
             .network_config
@@ -597,10 +643,11 @@ impl Tester {
             l2_zk_provider: DynProvider::new(l2_zk_provider.clone()),
             l2_wallet,
             prover_tester,
-            runtime,
+            runtime: Some(runtime),
             config,
             l2_rpc_address: l2_rpc_address.replace("0.0.0.0:", "http://localhost:"),
             batch_verification_url,
+            status_server_url,
             gateway_rpc_url,
             sl_provider,
             node_record,
