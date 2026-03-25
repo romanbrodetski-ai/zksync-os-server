@@ -17,6 +17,7 @@ pub struct BlockOverlay {
 #[derive(Debug, Default, Clone)]
 pub struct OverlayBuffer {
     overlays: Arc<BTreeMap<BlockNumber, BlockOverlay>>,
+    max_base_latest_seen: Option<BlockNumber>,
 }
 
 impl OverlayBuffer {
@@ -37,12 +38,24 @@ impl OverlayBuffer {
     where
         S: ReadStateHistory + 'a,
     {
-        let base_latest = *base.block_range_available().end();
+        let observed_base_latest = *base.block_range_available().end();
+        let base_latest = match self.max_base_latest_seen {
+            Some(previous) if observed_base_latest < previous => {
+                tracing::warn!(
+                    observed_base_latest,
+                    previous,
+                    "Base state latest block regressed while syncing overlay buffer; using the highest value seen so far"
+                );
+                previous
+            }
+            _ => observed_base_latest,
+        };
+        self.max_base_latest_seen = Some(base_latest);
         self.purge_already_persisted_blocks(base_latest)?;
         let first_overlay = self.overlays.keys().next().copied();
         let last_overlay = self.overlays.keys().next_back().copied();
         tracing::debug!(
-            "Synced overlay buffer with base (base_latest={base_latest}, overlays_len={}, overlays_range={first_overlay:?}..={last_overlay:?}). \
+            "Synced overlay buffer with base (observed_base_latest={observed_base_latest}, effective_base_latest={base_latest}, overlays_len={}, overlays_range={first_overlay:?}..={last_overlay:?}). \
             Preparing storage view to execute block {block_number_to_execute}.",
             self.overlays.len(),
         );
