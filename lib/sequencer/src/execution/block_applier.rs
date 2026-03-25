@@ -2,7 +2,7 @@ use crate::config::SequencerConfig;
 use crate::model::blocks::BlockCommandType;
 use alloy::consensus::Sealed;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use zksync_os_interface::types::BlockOutput;
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 use zksync_os_storage_api::{ReplayRecord, WriteReplay, WriteRepository, WriteState};
@@ -19,6 +19,7 @@ where
     pub replay: Replay,
     pub repositories: Repo,
     pub config: SequencerConfig,
+    pub applied_block_sender: watch::Sender<u64>,
 }
 
 #[async_trait]
@@ -74,6 +75,12 @@ where
             self.repositories
                 .populate(block_output.clone(), executed_replay.transactions.clone())
                 .await?;
+
+            self.applied_block_sender.send_replace(block_number);
+            tracing::debug!(
+                block_number,
+                "BlockApplier updated applied block progress watch"
+            );
 
             if output.send((block_output, executed_replay)).await.is_err() {
                 tracing::info!("outbound channel closed");

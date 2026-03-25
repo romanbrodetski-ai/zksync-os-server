@@ -842,6 +842,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             node_startup_state,
             block_replay_storage.clone(),
             runtime,
+            starting_block,
             block_context_provider,
             state.clone(),
             tree_db,
@@ -926,6 +927,7 @@ async fn run_main_node_pipeline(
     );
 
     let (replays_to_execute_sender, replays_to_execute) = tokio::sync::mpsc::channel(8);
+    let (applied_block_sender, applied_block_receiver) = watch::channel(starting_block - 1);
 
     let pipeline = Pipeline::new(runtime.clone())
         .pipe(ConsensusNodeCommandSource {
@@ -944,6 +946,7 @@ async fn run_main_node_pipeline(
             state: state.clone(),
             config: config.into(),
             tx_acceptance_state_sender,
+            applied_block_receiver,
         })
         .pipe(BlockCanonizer {
             consensus: canonization_engine,
@@ -954,6 +957,7 @@ async fn run_main_node_pipeline(
             replay: block_replay_storage.clone(),
             repositories: repositories.clone(),
             config: config.into(),
+            applied_block_sender,
         })
         .pipe_opt(
             config
@@ -1097,6 +1101,7 @@ async fn run_en_pipeline(
     node_state_on_startup: NodeStateOnStartup,
     block_replay_storage: impl WriteReplay + Clone,
     runtime: &Runtime,
+    starting_block: u64,
     block_context_provider: BlockContextProvider<impl L2Subpool>,
     state: impl ReadStateHistory + WriteState + Clone,
     tree: MerkleTree<RocksDBWrapper>,
@@ -1111,6 +1116,7 @@ async fn run_en_pipeline(
             .rocks_db_path
             .join(INTERNAL_CONFIG_FILE_NAME),
     );
+    let (applied_block_sender, applied_block_receiver) = watch::channel(starting_block - 1);
 
     Pipeline::new(runtime.clone())
         .pipe(ExternalNodeCommandSource {
@@ -1122,12 +1128,14 @@ async fn run_en_pipeline(
             state: state.clone(),
             config: config.into(),
             tx_acceptance_state_sender,
+            applied_block_receiver,
         })
         .pipe(BlockApplier {
             state: state.clone(),
             replay: block_replay_storage.clone(),
             repositories: repositories.clone(),
             config: config.into(),
+            applied_block_sender,
         })
         .pipe_opt(
             config
