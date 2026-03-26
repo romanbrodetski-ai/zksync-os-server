@@ -244,6 +244,15 @@ impl Tester {
     ///
     /// Note that allocated ports might change between old node and new one.
     pub async fn restart(self) -> anyhow::Result<Self> {
+        self.restart_with_overrides(|_| {}).await
+    }
+
+    /// Gracefully shut down and restart the node, reusing the same database and L1,
+    /// while applying additional config overrides for the restarted node.
+    pub async fn restart_with_overrides(
+        self,
+        config_overrides: impl FnOnce(&mut Config),
+    ) -> anyhow::Result<Self> {
         // Drop all fields that might rely on node being alive (e.g. alloy provider that uses RPC).
         let Self {
             runtime,
@@ -255,7 +264,7 @@ impl Tester {
         if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
             panic!("node failed to shutdown in time");
         }
-        Self::launch_node_inner(l1, false, None::<fn(&mut Config)>, tempdir, chain_layout).await
+        Self::launch_node_inner(l1, false, Some(config_overrides), tempdir, chain_layout).await
     }
 
     async fn launch_node(

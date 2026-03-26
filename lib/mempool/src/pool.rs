@@ -311,8 +311,8 @@ impl<'a> MarkingTxStream<'a> {
         let Some(marker) = self.marker.as_ref() else {
             panic!(
                 "tried to mark last L2 transaction as invalid but this stream does not serve L2 transactions"
-            )
+            );
         };
-        marker.mark_last_tx_as_invalid()
+        marker.mark_last_tx_as_invalid();
     }
 }
