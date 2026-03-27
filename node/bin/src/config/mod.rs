@@ -3,6 +3,8 @@ use self::util::{SecretKeyDeserializer, SignerConfigDeserializer};
 use crate::{command_source::RebuildOptions, default_protocol_version::DEFAULT_ROCKS_DB_PATH};
 use alloy::primitives::{Address, Bytes, U128};
 use num::{BigInt, BigUint, rational::Ratio};
+use reth_net_nat::net_if::resolve_net_if_ip;
+use reth_network_peers::TrustedPeer;
 use serde::{Deserialize, Serialize};
 use smart_config::metadata::{SizeUnit, TimeUnit};
 use smart_config::value::SecretString;
@@ -11,26 +13,38 @@ use smart_config::{
     EtherAmount, ParseErrors, Serde, de::Delimited, metadata::EtherUnit,
 };
 use std::collections::{HashMap, HashSet};
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::{path::PathBuf, time::Duration};
 use zksync_os_batch_verification;
 use zksync_os_l1_sender::commands::commit::CommitCommand;
 use zksync_os_l1_sender::commands::execute::ExecuteCommand;
 use zksync_os_l1_sender::commands::prove::ProofCommand;
 use zksync_os_mempool::SubPoolLimit;
-use zksync_os_network::{NodeRecord, SecretKey};
+use zksync_os_network::SecretKey;
 use zksync_os_observability::LogFormat;
 use zksync_os_observability::opentelemetry::OpenTelemetryLevel;
 use zksync_os_operator_signer::SignerConfig;
 use zksync_os_tx_validators::deployment_filter;
 use zksync_os_types::{NodeRole, PubdataMode};
 
+mod build_external_config;
 mod cli;
 mod util;
 
+pub use build_external_config::{build_external_config, load_config_file_sources};
+
 /// Configuration for the sequencer node.
 /// Includes configurations of all subsystems.
-/// Default values are provided for local setup.
+///
+/// ## Config loading order (later sources take precedence)
+/// 1. **Defaults defined here** — production-oriented (testnet/mainnet).
+/// 2. **Config files** passed via `--config`, applied in order. If `--config` is not provided and
+///    `local-chains/{protocol_version}/default/config.yaml` exists on disk, that file (along with
+///    `local-chains/local_dev.yaml`) is loaded automatically — this happens when running via
+///    `cargo run` from the repo root. When `--config` is explicitly specified, only those
+///    files are used. In Docker, the `local-chains/` directory is not copied into the image,
+///    so no files are auto-loaded and config must be provided entirely via environment variables.
+/// 3. **Environment variables** — always override everything.
 #[derive(Debug)]
 pub struct Config {
     pub general_config: GeneralConfig,
@@ -259,20 +273,44 @@ pub struct NetworkConfig {
     #[config(secret)]
     #[config(default, with = SecretKeyDeserializer)]
     pub secret_key: Option<SecretKey>,
-    /// IPv4 address to use for Node Discovery Protocol v5 (discv5) and RLPx Transport Protocol (rlpx).
+    /// IPv4 address to use for Node Discovery Protocol v5 (discv5) and RLPx Transport Protocol
+    /// (rlpx).
     #[config(default_t = Ipv4Addr::UNSPECIFIED, with = Serde![str])]
     pub address: Ipv4Addr,
+    /// Optional networking interface override. If set, this is used instead of `network.address`.
+    /// The interface IP is resolved at startup; for example, `eth0` may resolve to a private LAN
+    /// address such as `172.16.1.12`.
+    #[config(default_t = None)]
+    pub interface: Option<String>,
     /// Port to use for Node Discovery Protocol v5 (discv5) and RLPx Transport Protocol (rlpx).
     #[config(default_t = 3060)]
     pub port: u16,
     /// All boot nodes to start network discovery with. Expected format is
-    /// `enode://<node ID>@<IP address>:<port>` delimited by commas (`,`). For example:
+    /// `enode://<node ID>@<IP address>:<port>` or `enode://<node ID>@<DNS name>:<port>`
+    /// delimited by commas (`,`). DNS names are resolved by the networking stack. For example:
     /// `enode://dbd18888f17bad7df7fa958b57f4993f47312ba5364508fd0d9027e62ea17a037ca6985d6b0969c4341f1d4f8763a802785961989d07b1fb5373ced9d43969f6@127.0.0.1:3060`
     #[config(
         default,
         with = Delimited::repeat(Serde![str], ",")
     )]
-    pub boot_nodes: Vec<NodeRecord>,
+    pub boot_nodes: Vec<TrustedPeer>,
+}
+
+impl NetworkConfig {
+    fn resolved_address(&self) -> Ipv4Addr {
+        let Some(interface) = self.interface.as_deref() else {
+            return self.address;
+        };
+
+        match resolve_net_if_ip(interface).unwrap_or_else(|err| {
+            panic!("failed to resolve network interface '{interface}': {err}")
+        }) {
+            IpAddr::V4(ip) => ip,
+            IpAddr::V6(ip) => panic!(
+                "failed to resolve network interface '{interface}': resolved to unsupported IPv6 address {ip}"
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -379,7 +417,7 @@ pub struct SequencerConfig {
     /// If the state diffs are inconsistent, a warning or debug message will be logged, but it won't crash.
     /// The consistency checker propagates the output to the next pipeline item, so it is not a
     /// blocking process and the overhead should be small.
-    #[config(default_t = false)]
+    #[config(default_t = true)]
     pub revm_consistency_checker_enabled: bool,
     /// If enabled, node will revert block with divergence detected by REVM consistency checker.
     #[config(default_t = false)]
@@ -526,7 +564,7 @@ pub struct L1SenderConfig {
     pub command_limit: usize,
 
     /// How often to poll L1 for new blocks.
-    #[config(default_t = Duration::from_millis(100))]
+    #[config(default_t = 1 * TimeUnit::Seconds)]
     pub poll_interval: Duration,
 
     /// Use Fusaka blob transaction format if the timestamp has passed.
@@ -564,7 +602,7 @@ pub struct L1WatcherConfig {
     pub max_blocks_to_process: u64,
 
     /// How often to poll L1 for new priority requests.
-    #[config(default_t = 100 * TimeUnit::Millis)]
+    #[config(default_t = 1 * TimeUnit::Seconds)]
     pub poll_interval: Duration,
 }
 
@@ -594,12 +632,10 @@ pub struct MempoolTxValidatorConfig {
 #[config(derive(Default))]
 pub struct BatcherConfig {
     /// How long to keep a batch open before sealing it.
-    #[config(default_t = Duration::from_secs(1))]
+    /// On mainnet environments with low load, consider setting a higher value (e.g. 3 hours),
+    /// as L1 settlement has a non-trivial gas overhead per each batch.
+    #[config(default_t = 60 * TimeUnit::Seconds)]
     pub batch_timeout: Duration,
-
-    /// Max number of blocks per batch
-    #[config(default_t = 10)]
-    pub blocks_per_batch_limit: u64,
 
     /// Max number of transactions per batch
     #[config(default_t = 10000)]
@@ -643,14 +679,15 @@ pub struct ProverApiConfig {
     #[config(default_t = "0.0.0.0:3124".into())]
     pub address: String,
 
-    /// Enabled by default.
-    /// Use `prover_fake_fri_provers_enabled=false` to disable fake fri provers.
+    /// Pool of in-process fake FRI provers that instantly produce dummy proofs, bypassing real proving.
+    /// Useful for local development and testnets where real provers are unavailable or insufficient.
     #[config(nest)]
     pub fake_fri_provers: FakeFriProversConfig,
 
     #[config(nest)]
-    /// Enabled by default.
-    /// Use `prover_fake_snark_provers_enabled=false` to disable fake SNARK provers.
+    /// Pool of in-process fake SNARK provers that instantly produce dummy proofs, bypassing real proving.
+    /// Useful for local development and testnets where real provers are unavailable or insufficient.
+    /// Must not be enabled on mainnets (Fake proofs will be rejected by L1)
     ///
     /// Note that if SNARK provers are disabled but FRI fake provers are enabled,
     /// we'll still use fake SNARK proofs for fake FRI proofs -
@@ -658,7 +695,7 @@ pub struct ProverApiConfig {
     pub fake_snark_provers: FakeSnarkProversConfig,
 
     /// Timeout after which a FRI prover job is assigned to another Fri Prover Worker.
-    #[config(alias = "job_timeout", default_t = Duration::from_secs(300))]
+    #[config(alias = "job_timeout", default_t = 60 * TimeUnit::Seconds)]
     pub fri_job_timeout: Duration,
 
     /// Timeout after which a SNARK prover job is assigned to another SNARK Prover Worker.
@@ -685,7 +722,7 @@ pub struct ProverApiConfig {
 #[config(derive(Default))]
 pub struct FakeFriProversConfig {
     /// Whether to enable the fake provers pool.
-    #[config(default_t = true)]
+    #[config(default_t = false)]
     pub enabled: bool,
 
     /// Number of fake provers to run in parallel.
@@ -714,7 +751,7 @@ pub struct FakeFriProversConfig {
 #[config(derive(Default))]
 pub struct FakeSnarkProversConfig {
     /// Whether to enable the fake provers pool.
-    #[config(default_t = true)]
+    #[config(default_t = false)]
     pub enabled: bool,
 
     /// Only pick up jobs that are this time old.
@@ -784,12 +821,12 @@ pub struct SentryConfig {
 #[config(derive(Default))]
 pub struct LogConfig {
     /// Format of the logs emitted by the node.
-    #[config(default)]
+    #[config(default_t = LogFormat::Json)]
     #[config(with = Serde![str])]
     pub format: LogFormat,
 
     /// Whether to use color in logs.
-    #[config(default_t = true)]
+    #[config(default_t = false)]
     pub use_color: bool,
 }
 
@@ -836,7 +873,7 @@ pub struct BatchVerificationConfig {
     #[config(default_t = false)]
     pub server_enabled: bool,
     /// [server] Batch verification server address to listen on.
-    #[config(default_t = "0.0.0.0:3072".into())]
+    #[config(default_t = "0.0.0.0:3055".into())]
     pub listen_address: String,
     /// [en] If we are signing batches
     #[config(default_t = false)]
@@ -990,7 +1027,7 @@ impl From<NetworkConfig> for zksync_os_network::config::NetworkConfig {
             secret_key: value
                 .secret_key
                 .expect("`network.secret_key` is required for running p2p networking stack"),
-            address: value.address,
+            address: value.resolved_address(),
             port: value.port,
             boot_nodes: value.boot_nodes,
         }
@@ -1241,5 +1278,67 @@ impl From<FeeConfig> for zksync_os_sequencer::execution::FeeConfig {
                 .native_price_override
                 .map(|n| BigUint::from(n.to::<u128>())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NetworkConfig;
+    use smart_config::{ConfigRepository, ConfigSchema, DescribeConfig, Environment};
+    use std::net::Ipv4Addr;
+
+    const TEST_SECRET_KEY: &str =
+        "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+    fn loopback_interface() -> &'static str {
+        ["lo", "lo0"]
+            .into_iter()
+            .find(|interface| super::resolve_net_if_ip(interface).is_ok())
+            .expect("expected a loopback interface")
+    }
+
+    fn parse_network_config<const N: usize>(env_vars: [(&str, &str); N]) -> NetworkConfig {
+        let schema = ConfigSchema::new(&NetworkConfig::DESCRIPTION, "network");
+        let repo = ConfigRepository::new(&schema).with(Environment::from_iter("", env_vars));
+        repo.single::<NetworkConfig>().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn network_interface_is_a_separate_field_and_overrides_address() {
+        let config = parse_network_config([
+            ("NETWORK_SECRET_KEY", TEST_SECRET_KEY),
+            ("NETWORK_ADDRESS", "10.0.0.1"),
+            ("NETWORK_INTERFACE", loopback_interface()),
+        ]);
+        assert_eq!(config.address, Ipv4Addr::new(10, 0, 0, 1));
+        assert_eq!(config.interface.as_deref(), Some(loopback_interface()));
+
+        let runtime_config = zksync_os_network::config::NetworkConfig::from(config);
+        assert_eq!(runtime_config.address, Ipv4Addr::LOCALHOST);
+    }
+
+    #[test]
+    fn network_boot_nodes_accept_dns_names() {
+        let config = parse_network_config([(
+            "NETWORK_BOOT_NODES",
+            "enode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@localhost:30303?discport=30301",
+        )]);
+
+        assert_eq!(config.boot_nodes.len(), 1);
+        assert_eq!(config.boot_nodes[0].host.to_string(), "localhost");
+        let record = config.boot_nodes[0].resolve_blocking().unwrap();
+        assert!(record.address.is_loopback());
+        assert_eq!(record.tcp_port, 30303);
+        assert_eq!(record.udp_port, 30301);
+    }
+
+    #[test]
+    #[should_panic(expected = "failed to resolve network interface 'definitely-missing-if'")]
+    fn invalid_network_interface_panics() {
+        let _ = zksync_os_network::config::NetworkConfig::from(parse_network_config([
+            ("NETWORK_SECRET_KEY", TEST_SECRET_KEY),
+            ("NETWORK_INTERFACE", "definitely-missing-if"),
+            ("NETWORK_ADDRESS", "10.0.0.1"),
+        ]));
     }
 }

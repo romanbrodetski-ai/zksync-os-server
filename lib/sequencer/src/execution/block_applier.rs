@@ -1,9 +1,8 @@
 use crate::config::SequencerConfig;
 use crate::model::blocks::BlockCommandType;
 use alloy::consensus::Sealed;
-use anyhow::Context;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use zksync_os_interface::types::BlockOutput;
 use zksync_os_pipeline::{PeekableReceiver, PipelineComponent};
 use zksync_os_storage_api::{ReplayRecord, WriteReplay, WriteRepository, WriteState};
@@ -20,6 +19,7 @@ where
     pub replay: Replay,
     pub repositories: Repo,
     pub config: SequencerConfig,
+    pub applied_block_sender: watch::Sender<u64>,
 }
 
 #[async_trait]
@@ -42,7 +42,8 @@ where
     ) -> anyhow::Result<()> {
         loop {
             let Some((block_output, executed_replay, cmd_type)) = input.recv().await else {
-                anyhow::bail!("inbound channel closed");
+                tracing::info!("inbound channel closed");
+                return Ok(());
             };
 
             let block_number = executed_replay.block_context.block_number;
@@ -52,7 +53,10 @@ where
                 _ => false,
             };
 
-            tracing::info!(block_number, "Persisting block {block_number}");
+            tracing::info!(
+                block_number,
+                "Received canonized block {block_number}. Saving to disc."
+            );
             self.replay.write(
                 Sealed::new_unchecked(executed_replay.clone(), block_output.header.hash()),
                 override_allowed,
@@ -72,10 +76,16 @@ where
                 .populate(block_output.clone(), executed_replay.transactions.clone())
                 .await?;
 
-            output
-                .send((block_output, executed_replay))
-                .await
-                .context("send downstream")?;
+            self.applied_block_sender.send_replace(block_number);
+            tracing::debug!(
+                block_number,
+                "BlockApplier updated applied block progress watch"
+            );
+
+            if output.send((block_output, executed_replay)).await.is_err() {
+                tracing::info!("outbound channel closed");
+                return Ok(());
+            }
         }
     }
 }

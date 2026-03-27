@@ -31,34 +31,81 @@ pub struct PriorityTreeManager<ReplayStorage, Finality> {
     finality: Finality,
     committed_batch_provider: CommittedBatchProvider,
     last_executed_batch_on_init: u64,
+    initial_block_number: u64,
 }
 
-impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
+impl<ReplayStorage: ReadReplay + Clone, Finality: ReadFinality + Clone>
     PriorityTreeManager<ReplayStorage, Finality>
 {
-    pub async fn new(
+    pub fn new(
         replay_storage: ReplayStorage,
         db_path: &Path,
         finality: Finality,
         committed_batch_provider: CommittedBatchProvider,
     ) -> anyhow::Result<Self> {
-        let started_at = Instant::now();
         let db = PriorityTreeDB::new(db_path);
-        let (initial_block_number, mut merkle_tree) = db.init_tree()?;
-        let finality_state = finality.get_finality_status();
+        let (initial_block_number, merkle_tree) = db.init_tree()?;
+
+        Ok(Self {
+            merkle_tree: Arc::new(Mutex::new(merkle_tree)),
+            replay_storage,
+            db,
+            finality,
+            committed_batch_provider,
+            last_executed_batch_on_init: 0,
+            initial_block_number,
+        })
+    }
+
+    /// Initializes priority tree and starts the tasks
+    /// For ENs set main_node_channels to None
+    pub async fn run(
+        mut self,
+        main_node_channels: Option<(InputChannel, OutputChannel)>,
+    ) -> anyhow::Result<()> {
+        self.init().await.expect("init");
+
+        // Internal channels for priority tree manager
+        let (priority_txs_internal_sender, priority_txs_internal_receiver) =
+            mpsc::channel::<(u64, u64, Option<usize>)>(1000);
+
+        // Clone what we need before moving into async blocks
+        let priority_tree_manager_for_prepare = self.clone();
+        let priority_tree_manager_for_caching = self;
+        tokio::select! {
+            result = priority_tree_manager_for_caching
+                        .keep_caching(priority_txs_internal_receiver) => {
+                result.expect("keep_caching");
+                Ok(())
+            }
+            result = priority_tree_manager_for_prepare
+                .prepare_execute_commands(main_node_channels, priority_txs_internal_sender) => {
+                result.expect("prepare_execute_commands");
+                Ok(())
+            }
+        }
+    }
+
+    /// Performs the async initialization: replays any blocks that are already executed on L1
+    /// but not yet reflected in the persisted priority tree. Must be called before any other
+    /// method that depends on `last_executed_batch_on_init`.
+    async fn init(&mut self) -> anyhow::Result<()> {
+        let started_at = Instant::now();
+        let finality_state = self.finality.get_finality_status();
         let (last_executed_batch, last_executed_block) = (
             finality_state.last_executed_batch,
             finality_state.last_executed_block,
         );
 
-        tracing::debug!(
-            persisted_up_to = initial_block_number,
+        tracing::info!(
+            persisted_up_to = self.initial_block_number,
             last_executed_block = last_executed_block,
             "adding missing blocks to priority tree"
         );
 
-        for block_number in (initial_block_number + 1)..=last_executed_block {
-            let record = Self::wait_for_replay_record(&replay_storage, block_number).await;
+        let mut merkle_tree = self.merkle_tree.lock().await;
+        for block_number in (self.initial_block_number + 1)..=last_executed_block {
+            let record = Self::wait_for_replay_record(&self.replay_storage, block_number).await;
             for tx in record.transactions {
                 if let ZkEnvelope::L1(l1_tx) = tx.into_envelope() {
                     merkle_tree.push_hash(*l1_tx.hash());
@@ -72,15 +119,10 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
             time_taken = ?started_at.elapsed(),
             "re-built priority tree"
         );
+        drop(merkle_tree);
 
-        Ok(Self {
-            merkle_tree: Arc::new(Mutex::new(merkle_tree)),
-            replay_storage,
-            db,
-            finality,
-            committed_batch_provider,
-            last_executed_batch_on_init: last_executed_batch,
-        })
+        self.last_executed_batch_on_init = last_executed_batch;
+        Ok(())
     }
 
     /// Keeps building the tree by adding new transactions to the priority tree.
@@ -89,7 +131,7 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
     ///   and it will forward the proven batch envelopes along with the priority ops proofs.
     /// - For the EN: you must provide neither `proved_batch_envelopes_receiver` nor `execute_batches_sender`
     ///   and it will keep adding new transactions to the tree for finalized blocks.
-    pub async fn prepare_execute_commands(
+    async fn prepare_execute_commands(
         self,
         main_node_channels: Option<(InputChannel, OutputChannel)>,
         priority_ops_internal_sender: mpsc::Sender<(u64, u64, Option<usize>)>,
@@ -102,15 +144,18 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
             main_node_channels.unzip();
         let mut last_processed_batch = self.last_executed_batch_on_init;
 
-        async fn take_n<T>(receiver: &mut PeekableReceiver<T>, n: usize) -> anyhow::Result<Vec<T>> {
+        async fn take_n<T>(
+            receiver: &mut PeekableReceiver<T>,
+            n: usize,
+        ) -> anyhow::Result<Option<Vec<T>>> {
             let mut out = Vec::default();
             while out.len() < n {
                 match receiver.recv().await {
                     Some(v) => out.push(v),
-                    None => anyhow::bail!("channel closed"),
+                    None => return Ok(None),
                 }
             }
-            Ok(out)
+            Ok(Some(out))
         }
 
         loop {
@@ -121,7 +166,11 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
                     //             aggregation seal criteria yet.
                     //             Addressing this includes reworking L1SenderCommand::Passthrough logic -
                     //             Aggregation is only possible AFTER the last_executed_batch_on_init.
-                    let envelope = take_n(r, 1).await?.pop().unwrap();
+                    let Some(mut envelopes) = take_n(r, 1).await? else {
+                        tracing::info!("inbound channel closed");
+                        return Ok(());
+                    };
+                    let envelope = envelopes.pop().unwrap();
                     if envelope.batch_number() <= self.last_executed_batch_on_init {
                         tracing::info!(
                             batch_number = envelope.batch_number(),
@@ -205,7 +254,7 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
                     }
                 }
                 interop_roots.push(batch_interop_roots);
-                tracing::debug!(
+                tracing::info!(
                     batch_number,
                     last_block_number,
                     priority_op_count,
@@ -273,7 +322,7 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
     }
 
     /// Keeps caching the priority tree after each batch execution.
-    pub async fn keep_caching(
+    async fn keep_caching(
         self,
         mut priority_ops_internal_receiver: mpsc::Receiver<(u64, u64, Option<usize>)>,
     ) -> anyhow::Result<()> {
@@ -285,11 +334,12 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
 
         loop {
             latency_tracker.enter_state(GenericComponentState::WaitingRecv);
-            let (batch_number, last_block_number, last_priority_op_id) =
-                priority_ops_internal_receiver
-                    .recv()
-                    .await
-                    .context("`priority_ops_internal_receiver` closed")?;
+            let Some((batch_number, last_block_number, last_priority_op_id)) =
+                priority_ops_internal_receiver.recv().await
+            else {
+                // Sender was dropped (graceful shutdown), exit cleanly.
+                return Ok(());
+            };
             finality_receiver
                 .wait_for(|f| last_block_number <= f.last_executed_block)
                 .await
@@ -305,7 +355,7 @@ impl<ReplayStorage: ReadReplay, Finality: ReadFinality>
                 self.db
                     .cache_tree(&tree, last_block_number)
                     .context("failed to cache tree")?;
-                tracing::debug!(batch_number, "cached priority tree");
+                tracing::info!(batch_number, "cached priority tree");
             }
         }
     }

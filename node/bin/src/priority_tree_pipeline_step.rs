@@ -28,7 +28,7 @@ where
     BlockStorage: ReadReplay + Clone,
     Finality: ReadFinality + Clone,
 {
-    pub async fn new(
+    pub fn new(
         block_storage: BlockStorage,
         db_path: &Path,
         finality: Finality,
@@ -39,8 +39,7 @@ where
             db_path,
             finality.clone(),
             committed_batch_provider,
-        )
-        .await?;
+        )?;
 
         Ok(Self {
             priority_tree_manager,
@@ -61,43 +60,13 @@ where
     const OUTPUT_BUFFER_SIZE: usize = 5;
 
     async fn run(
-        self,
+        mut self,
         input: PeekableReceiver<Self::Input>,
         output: mpsc::Sender<Self::Output>,
     ) -> anyhow::Result<()> {
-        // Internal channels for priority tree manager
-        let (priority_txs_internal_sender, priority_txs_internal_receiver) =
-            mpsc::channel::<(u64, u64, Option<usize>)>(1000);
-
-        // Clone what we need before moving into async blocks
-        let priority_tree_manager_for_prepare = self.priority_tree_manager.clone();
-        let priority_tree_manager_for_caching = self.priority_tree_manager;
-
-        // Spawn the three tasks that make up the priority tree subsystem
-        let prepare_task = tokio::spawn({
-            async move {
-                priority_tree_manager_for_prepare
-                    .prepare_execute_commands(Some((input, output)), priority_txs_internal_sender)
-                    .await
-            }
-        });
-
-        let keep_caching_task = tokio::spawn({
-            async move {
-                priority_tree_manager_for_caching
-                    .keep_caching(priority_txs_internal_receiver)
-                    .await
-            }
-        });
-
-        // Wait for any task to complete (they should all run indefinitely)
-        tokio::select! {
-            _ = prepare_task => {
-                anyhow::bail!("Priority tree prepare_execute_commands ended unexpectedly")
-            }
-            _ = keep_caching_task => {
-                anyhow::bail!("Priority tree keep_caching ended unexpectedly")
-            }
-        }
+        self.priority_tree_manager
+            .run(Some((input, output)))
+            .await?;
+        Ok(())
     }
 }
