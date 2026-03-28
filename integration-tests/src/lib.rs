@@ -291,8 +291,6 @@ impl Tester {
         if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
             panic!("node failed to shutdown in time");
         }
-        // TODO: node seems to not properly release the network port on shutdown.
-        config.network_config.port = LockedPort::acquire_unused().await?.port;
         Self::launch_node_inner(
             l1,
             config,
