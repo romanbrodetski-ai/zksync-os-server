@@ -4,6 +4,7 @@ use crate::network::Zksync;
 use crate::node_log::NodeLogState;
 use crate::prover_tester::ProverTester;
 use crate::provider::{ZksyncApi, ZksyncTestingProvider};
+use crate::rpc_recorder::{HttpRpcRecorder, RpcRecordConfig};
 use crate::test_config::{build_node_config, disable_prover_input_generation};
 use crate::utils::LockedPort;
 use alloy::network::EthereumWallet;
@@ -48,6 +49,7 @@ mod network;
 mod node_log;
 mod prover_tester;
 pub mod provider;
+pub mod rpc_recorder;
 pub mod test_config;
 pub mod upgrade;
 mod utils;
@@ -388,10 +390,24 @@ impl Tester {
         &self.l2_rpc_address
     }
 
+    pub fn l2_http_rpc_url(&self) -> &str {
+        &self.l2_rpc_address
+    }
+
+    pub fn record_l2_http_rpc(&self, config: RpcRecordConfig) -> HttpRpcRecorder {
+        HttpRpcRecorder::start_http("l2", self.l2_http_rpc_url(), config)
+    }
+
     pub fn external_node_config(&self) -> Config {
         let mut config = self.config.clone();
         self.apply_external_node_defaults(&mut config);
         config
+    }
+
+    pub async fn launch_external_node(&self) -> anyhow::Result<Self> {
+        // Due to type inference issue, we need to specify None type here and this whole function if a de-facto helper for this
+        self.launch_external_node_inner(None::<fn(&mut Config)>)
+            .await
     }
 
     pub async fn launch_from_config(&self, config: Config) -> anyhow::Result<Self> {
