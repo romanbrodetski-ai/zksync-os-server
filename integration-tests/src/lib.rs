@@ -16,7 +16,7 @@ use anyhow::Context;
 use backon::ConstantBuilder;
 use backon::Retryable;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -114,6 +114,8 @@ pub const BATCH_VERIFICATION_KEYS: [&str; 2] = [
 /// shutdown. We put 60s here until zksync-os v0.4.0 which will get rid of RISC-V simulator and
 /// allow async/abortable prover input generation.
 const NODE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
+const NETWORK_PORT_RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+const NETWORK_PORT_RELEASE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Set of addresses (i.e. public keys) expected by batch verification. Derived from [`BATCH_VERIFICATION_KEYS`].
 static BATCH_VERIFICATION_ADDRESSES: LazyLock<Vec<String>> = LazyLock::new(|| {
     BATCH_VERIFICATION_KEYS
@@ -146,6 +148,7 @@ pub struct Tester {
 
     // Needed to be able to connect external nodes
     node_record: NodeRecord,
+    network_port: u16,
     l2_rpc_address: String,
     batch_verification_url: String,
     gateway_rpc_url: Option<String>,
@@ -250,11 +253,14 @@ impl Tester {
             l1,
             tempdir,
             chain_layout,
+            network_port,
             ..
         } = self;
         if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
             panic!("node failed to shutdown in time");
         }
+        drop(runtime);
+        wait_for_network_port_release(network_port).await;
         Self::launch_node_inner(l1, false, None::<fn(&mut Config)>, tempdir, chain_layout).await
     }
 
@@ -532,12 +538,43 @@ impl Tester {
             gateway_rpc_url,
             sl_provider,
             node_record,
+            network_port: network_locked_port.port,
             tempdir: tempdir.clone(),
             chain_layout,
             supporting_nodes: Vec::new(),
         })
     }
 }
+
+async fn wait_for_network_port_release(port: u16) {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let deadline = tokio::time::Instant::now() + NETWORK_PORT_RELEASE_TIMEOUT;
+    loop {
+        if network_port_is_reusable(addr) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "network port {port} did not become reusable within {NETWORK_PORT_RELEASE_TIMEOUT:?}"
+        );
+        tokio::time::sleep(NETWORK_PORT_RELEASE_POLL_INTERVAL).await;
+    }
+}
+
+fn network_port_is_reusable(addr: SocketAddr) -> bool {
+    let tcp = match TcpListener::bind(addr) {
+        Ok(listener) => listener,
+        Err(_) => return false,
+    };
+    let udp = match UdpSocket::bind(addr) {
+        Ok(socket) => socket,
+        Err(_) => return false,
+    };
+    drop(udp);
+    drop(tcp);
+    true
+}
+
 
 async fn ensure_test_wallet_funded(
     l1: &AnvilL1,
