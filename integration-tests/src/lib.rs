@@ -407,6 +407,7 @@ impl Tester {
             batcher_config: default_config.batcher_config,
             prover_input_generator_config: ProverInputGeneratorConfig {
                 logging_enabled: enable_prover,
+                disable_input_generation: !enable_prover,
                 ..default_config.prover_input_generator_config
             },
             prover_api_config,

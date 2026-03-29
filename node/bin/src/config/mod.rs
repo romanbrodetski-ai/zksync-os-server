@@ -665,6 +665,14 @@ pub struct ProverInputGeneratorConfig {
     /// The batcher will wait for block N to finish before starting block N + maximum_in_flight_blocks.
     #[config(default_t = 16)]
     pub maximum_in_flight_blocks: usize,
+
+    /// Skip prover input generation entirely and pass `ProverInput::Fake` through the pipeline.
+    /// Used for tests and testnets where the expensive RiscV witness computation is unnecessary.
+    ///
+    /// Requires both `prover_api_config.fake_fri_provers.enabled` and
+    /// `prover_api_config.fake_snark_provers.enabled` to be `true`.
+    #[config(default_t = false)]
+    pub disable_input_generation: bool,
 }
 
 /// Only used on the Main Node.
