@@ -1,18 +1,18 @@
 use async_trait::async_trait;
-use openraft::error::{Fatal, RaftError, ReplicationClosed, RPCError, StreamingError, Unreachable};
-use openraft::network::{RaftNetwork, RaftNetworkFactory as RaftNetworkFactoryTrait, RPCOption};
 use openraft::Config;
+use openraft::error::{Fatal, RPCError, RaftError, ReplicationClosed, StreamingError, Unreachable};
+use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory as RaftNetworkFactoryTrait};
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, SnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    SnapshotResponse, VoteRequest, VoteResponse,
 };
 use openraft::{Raft, Snapshot, Vote};
+use reth_network_peers::PeerId;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::timeout;
-use reth_network_peers::PeerId;
-use zksync_os_consensus_types::{debug_display_raft_entry, RaftNode, RaftTypeConfig};
+use zksync_os_consensus_types::{RaftNode, RaftTypeConfig, debug_display_raft_entry};
 use zksync_os_network::raft::protocol::{RaftRequestHandler, RaftRouter};
 use zksync_os_network::raft::wire::{RaftRequest, RaftResponse};
 
@@ -78,21 +78,26 @@ impl RaftNetworkFactoryImpl {
             Duration::from_millis(raft_config.heartbeat_interval).saturating_mul(5),
             Duration::from_secs(2),
         );
-        tracing::info!(nodes_count = nodes.len(), timeout_ms = timeout.as_millis(), "building raft network factory");
+        tracing::info!(
+            nodes_count = nodes.len(),
+            timeout_ms = timeout.as_millis(),
+            "building raft network factory"
+        );
         for (node_id, node) in nodes {
             tracing::debug!(%node_id, addr = %node.addr, "registered raft network peer");
         }
-        Ok(Self {
-            router,
-            timeout,
-        })
+        Ok(Self { router, timeout })
     }
 }
 
 impl RaftNetworkFactoryTrait<RaftTypeConfig> for RaftNetworkFactoryImpl {
     type Network = RaftNetworkClient;
 
-    fn new_client(&mut self, target: PeerId, _node: &RaftNode) -> impl Future<Output = Self::Network> + Send {
+    fn new_client(
+        &mut self,
+        target: PeerId,
+        _node: &RaftNode,
+    ) -> impl Future<Output = Self::Network> + Send {
         let router = self.router.clone();
         let timeout = self.timeout;
         tracing::debug!(%target, timeout_ms = timeout.as_millis(), "creating raft network client");
@@ -120,7 +125,12 @@ impl RaftNetwork<RaftTypeConfig> for RaftNetworkClient {
         &mut self,
         rpc: AppendEntriesRequest<RaftTypeConfig>,
         option: RPCOption,
-    ) -> impl Future<Output = Result<AppendEntriesResponse<PeerId>, RPCError<PeerId, RaftNode, RaftError<PeerId>>>> + Send {
+    ) -> impl Future<
+        Output = Result<
+            AppendEntriesResponse<PeerId>,
+            RPCError<PeerId, RaftNode, RaftError<PeerId>>,
+        >,
+    > + Send {
         let router = self.router.clone();
         let peer_id = self.peer_id;
         let timeout_dur = std::cmp::min(self.timeout, option.hard_ttl());
@@ -155,7 +165,9 @@ impl RaftNetwork<RaftTypeConfig> for RaftNetworkClient {
         &mut self,
         rpc: VoteRequest<PeerId>,
         option: RPCOption,
-    ) -> impl Future<Output = Result<VoteResponse<PeerId>, RPCError<PeerId, RaftNode, RaftError<PeerId>>>> + Send {
+    ) -> impl Future<
+        Output = Result<VoteResponse<PeerId>, RPCError<PeerId, RaftNode, RaftError<PeerId>>>,
+    > + Send {
         let router = self.router.clone();
         let peer_id = self.peer_id;
         let timeout_dur = std::cmp::min(self.timeout, option.hard_ttl());
@@ -184,7 +196,12 @@ impl RaftNetwork<RaftTypeConfig> for RaftNetworkClient {
         &mut self,
         rpc: InstallSnapshotRequest<RaftTypeConfig>,
         option: RPCOption,
-    ) -> impl Future<Output = Result<InstallSnapshotResponse<PeerId>, RPCError<PeerId, RaftNode, RaftError<PeerId, openraft::error::InstallSnapshotError>>>> + Send {
+    ) -> impl Future<
+        Output = Result<
+            InstallSnapshotResponse<PeerId>,
+            RPCError<PeerId, RaftNode, RaftError<PeerId, openraft::error::InstallSnapshotError>>,
+        >,
+    > + Send {
         let router = self.router.clone();
         let peer_id = self.peer_id;
         let client_timeout = self.timeout;
@@ -218,7 +235,9 @@ impl RaftNetwork<RaftTypeConfig> for RaftNetworkClient {
         _snapshot: Snapshot<RaftTypeConfig>,
         _cancel: impl Future<Output = ReplicationClosed> + Send + 'static,
         _option: RPCOption,
-    ) -> impl Future<Output = Result<SnapshotResponse<PeerId>, StreamingError<RaftTypeConfig, Fatal<PeerId>>>> + Send {
+    ) -> impl Future<
+        Output = Result<SnapshotResponse<PeerId>, StreamingError<RaftTypeConfig, Fatal<PeerId>>>,
+    > + Send {
         async move {
             let err = std::io::Error::new(std::io::ErrorKind::Other, "snapshotting disabled");
             Err(StreamingError::Unreachable(Unreachable::new(&err)))

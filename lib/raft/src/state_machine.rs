@@ -19,7 +19,7 @@ use openraft::{
 use reth_network_peers::PeerId;
 use std::future::Future;
 use tokio::sync::mpsc;
-use zksync_os_consensus_types::{debug_display_raft_entry, RaftNode, RaftTypeConfig};
+use zksync_os_consensus_types::{RaftNode, RaftTypeConfig, debug_display_raft_entry};
 use zksync_os_rocksdb::RocksDB;
 use zksync_os_storage_api::{ReadReplay, ReplayRecord};
 
@@ -57,10 +57,7 @@ impl RaftStateMachineTrait<RaftTypeConfig> for RaftStateMachineStore {
         &mut self,
     ) -> impl Future<
         Output = Result<
-            (
-                Option<LogId<PeerId>>,
-                StoredMembership<PeerId, RaftNode>,
-            ),
+            (Option<LogId<PeerId>>, StoredMembership<PeerId, RaftNode>),
             StorageError<PeerId>,
         >,
     > + Send {
@@ -77,8 +74,7 @@ impl RaftStateMachineTrait<RaftTypeConfig> for RaftStateMachineStore {
             // is durably in the WAL, so a crash before the WAL write causes OpenRaft to
             // re-apply the missing entry on restart.
             let latest_wal_block = self.wal.latest_record();
-            let last_applied_log_id =
-                self.meta_store.load_block_log_id(latest_wal_block)?;
+            let last_applied_log_id = self.meta_store.load_block_log_id(latest_wal_block)?;
 
             // If `RaftApplied` has entries beyond the latest WAL block, the process exited
             // after `save_block_log_id` but before `BlockApplier` wrote those blocks to the WAL.
@@ -201,7 +197,6 @@ impl RaftStateMachineTrait<RaftTypeConfig> for RaftStateMachineStore {
     }
 }
 
-
 impl RaftStateMachineStore {
     /// Scans `RaftApplied` for blocks beyond `latest_wal_block` and logs them if any.
     /// OpenRaft will re-apply them on restart.
@@ -227,7 +222,6 @@ impl RaftStateMachineStore {
         Ok(())
     }
 }
-
 
 #[derive(Debug, Clone)]
 /// Snapshot builder placeholder; snapshots are intentionally disabled.

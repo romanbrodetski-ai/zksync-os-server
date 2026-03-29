@@ -16,8 +16,8 @@ use std::future::Future;
 use std::ops::RangeBounds;
 use std::path::Path;
 use zksync_os_consensus_types::{RaftNode, RaftTypeConfig};
-use zksync_os_rocksdb::db::{NamedColumnFamily, WriteBatch};
 use zksync_os_rocksdb::RocksDB;
+use zksync_os_rocksdb::db::{NamedColumnFamily, WriteBatch};
 
 #[derive(Clone, Debug)]
 pub struct RaftLogStore {
@@ -122,7 +122,10 @@ impl RaftStateMachineMetaStore {
     ) -> Result<RaftStateMachineMeta, StorageError<PeerId>> {
         let bytes = self
             .db
-            .get_cf(RaftColumnFamily::StateMachineMeta, Self::STATE_MACHINE_META_KEY)
+            .get_cf(
+                RaftColumnFamily::StateMachineMeta,
+                Self::STATE_MACHINE_META_KEY,
+            )
             .map_err(|e| io_err(&subject, ErrorVerb::Read, &e))?;
         let Some(bytes) = bytes else {
             return Ok(RaftStateMachineMeta::default());
@@ -255,11 +258,13 @@ impl RaftLogReader<RaftTypeConfig> for RaftLogStore {
                 .db
                 .from_iterator_cf(RaftColumnFamily::Logs, start_key.as_slice()..)
             {
-                let index = u64::from_be_bytes(
-                    key.as_ref().try_into().map_err(|_| {
-                        io_err_msg(&ErrorSubject::Store, ErrorVerb::Read, "invalid raft log index key")
-                    })?,
-                );
+                let index = u64::from_be_bytes(key.as_ref().try_into().map_err(|_| {
+                    io_err_msg(
+                        &ErrorSubject::Store,
+                        ErrorVerb::Read,
+                        "invalid raft log index key",
+                    )
+                })?);
                 if let Some(end) = end {
                     if index > end {
                         break;
@@ -277,7 +282,9 @@ impl RaftLogReader<RaftTypeConfig> for RaftLogStore {
 impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
     type LogReader = RaftLogStore;
 
-    fn get_log_state(&mut self) -> impl Future<Output = Result<LogState<RaftTypeConfig>, StorageError<PeerId>>> + Send {
+    fn get_log_state(
+        &mut self,
+    ) -> impl Future<Output = Result<LogState<RaftTypeConfig>, StorageError<PeerId>>> + Send {
         async move {
             let last_log_id = self.last_log_id_from_db()?;
             Ok(LogState {
@@ -292,7 +299,10 @@ impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
         async move { self.clone() }
     }
 
-    fn save_vote(&mut self, vote: &Vote<PeerId>) -> impl Future<Output = Result<(), StorageError<PeerId>>> + Send {
+    fn save_vote(
+        &mut self,
+        vote: &Vote<PeerId>,
+    ) -> impl Future<Output = Result<(), StorageError<PeerId>>> + Send {
         async move {
             let bytes = bincode::serde::encode_to_vec(vote, bincode::config::standard())
                 .expect("serialize vote");
@@ -305,7 +315,9 @@ impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
         }
     }
 
-    fn read_vote(&mut self) -> impl Future<Output = Result<Option<Vote<PeerId>>, StorageError<PeerId>>> + Send {
+    fn read_vote(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<Vote<PeerId>>, StorageError<PeerId>>> + Send {
         async move {
             let bytes = self
                 .db
@@ -314,9 +326,12 @@ impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
             let Some(bytes) = bytes else {
                 return Ok(None);
             };
-            let vote = bincode::serde::decode_from_slice::<Vote<PeerId>, _>(&bytes, bincode::config::standard())
-                .map_err(|e| io_err(&ErrorSubject::Store, ErrorVerb::Read, &e))?
-                .0;
+            let vote = bincode::serde::decode_from_slice::<Vote<PeerId>, _>(
+                &bytes,
+                bincode::config::standard(),
+            )
+            .map_err(|e| io_err(&ErrorSubject::Store, ErrorVerb::Read, &e))?
+            .0;
             Ok(Some(vote))
         }
     }
@@ -352,10 +367,12 @@ impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
             let Some(bytes) = bytes else {
                 return Ok(None);
             };
-            let committed =
-                bincode::serde::decode_from_slice::<LogId<PeerId>, _>(&bytes, bincode::config::standard())
-                    .map_err(|e| io_err(&ErrorSubject::Store, ErrorVerb::Read, &e))?
-                    .0;
+            let committed = bincode::serde::decode_from_slice::<LogId<PeerId>, _>(
+                &bytes,
+                bincode::config::standard(),
+            )
+            .map_err(|e| io_err(&ErrorSubject::Store, ErrorVerb::Read, &e))?
+            .0;
             Ok(Some(committed))
         }
     }
@@ -385,7 +402,10 @@ impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
         }
     }
 
-    fn truncate(&mut self, log_id: LogId<PeerId>) -> impl Future<Output = Result<(), StorageError<PeerId>>> + Send {
+    fn truncate(
+        &mut self,
+        log_id: LogId<PeerId>,
+    ) -> impl Future<Output = Result<(), StorageError<PeerId>>> + Send {
         async move {
             let start_key = Self::index_key(log_id.index);
             let mut batch = self.db.new_write_batch();
@@ -402,7 +422,10 @@ impl RaftLogStorage<RaftTypeConfig> for RaftLogStore {
         }
     }
 
-    fn purge(&mut self, log_id: LogId<PeerId>) -> impl Future<Output = Result<(), StorageError<PeerId>>> + Send {
+    fn purge(
+        &mut self,
+        log_id: LogId<PeerId>,
+    ) -> impl Future<Output = Result<(), StorageError<PeerId>>> + Send {
         async move {
             let mut batch = self.db.new_write_batch();
             let start = Self::index_key(0);

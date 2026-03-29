@@ -1,6 +1,6 @@
 use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    VoteRequest, VoteResponse,
 };
 use reth_network_peers::PeerId;
 use serde::{Deserialize, Serialize};
@@ -26,8 +26,14 @@ pub enum RaftResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum RaftWireMessage {
-    Request { id: RequestId, req: RaftRequest },
-    Response { id: RequestId, resp: Result<RaftResponse, String> },
+    Request {
+        id: RequestId,
+        req: RaftRequest,
+    },
+    Response {
+        id: RequestId,
+        resp: Result<RaftResponse, String>,
+    },
 }
 
 impl RaftWireMessage {
@@ -49,18 +55,12 @@ impl RaftWireMessage {
             RaftWireMessage::Request { id, req } => {
                 out.push(RAFT_REQUEST_MESSAGE_ID);
                 let payload = RequestPayload { id: *id, req };
-                out.extend(
-                    serde_json::to_vec(&payload)
-                        .expect("serialize raft request payload"),
-                );
+                out.extend(serde_json::to_vec(&payload).expect("serialize raft request payload"));
             }
             RaftWireMessage::Response { id, resp } => {
                 out.push(RAFT_RESPONSE_MESSAGE_ID);
                 let payload = ResponsePayload { id: *id, resp };
-                out.extend(
-                    serde_json::to_vec(&payload)
-                        .expect("serialize raft response payload"),
-                );
+                out.extend(serde_json::to_vec(&payload).expect("serialize raft response payload"));
             }
         }
         out
@@ -79,14 +79,12 @@ impl RaftWireMessage {
             resp: Result<RaftResponse, String>,
         }
 
-        let (msg_id, payload) = bytes
-            .split_first()
-            .ok_or_else(|| {
-                serde_json::Error::io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "empty raft message",
-                ))
-            })?;
+        let (msg_id, payload) = bytes.split_first().ok_or_else(|| {
+            serde_json::Error::io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "empty raft message",
+            ))
+        })?;
 
         match *msg_id {
             RAFT_REQUEST_MESSAGE_ID => {

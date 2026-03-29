@@ -22,6 +22,22 @@ impl ClusterState {
         Self { nodes: node_states }
     }
 
+    /// Collects status from all non-suspended nodes in parallel.
+    pub async fn collect_active(nodes: &[Tester]) -> Self {
+        let node_states =
+            futures::future::join_all(
+                nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, node)| !node.is_suspended())
+                    .map(|(idx, node)| async move {
+                        (idx, node.status().await.map_err(|e| e.to_string()))
+                    }),
+            )
+            .await;
+        Self { nodes: node_states }
+    }
+
     /// Returns true if all nodes are healthy and returned successful status
     pub fn all_healthy(&self) -> bool {
         self.nodes
@@ -89,10 +105,8 @@ impl ClusterState {
         }
 
         let agreed = self.agreed_leader();
-        let leader_node_id = self.nodes[leader_indices[0]]
-            .1
-            .as_ref()
-            .ok()
+        let leader_node_id = self
+            .status_for_index(leader_indices[0])
             .and_then(|s| s.consensus.raft.as_ref())
             .map(|r| r.node_id.as_str());
 
@@ -105,7 +119,7 @@ impl ClusterState {
         let agreed = self.agreed_leader();
         let leader_node_id = leader_indices
             .first()
-            .and_then(|&idx| self.nodes[idx].1.as_ref().ok())
+            .and_then(|&idx| self.status_for_index(idx))
             .and_then(|s| s.consensus.raft.as_ref())
             .map(|r| r.node_id.as_str());
 
@@ -179,7 +193,7 @@ impl ClusterState {
         if let Some(agreed) = self.agreed_leader() {
             let leader_node_id = leader_indices
                 .first()
-                .and_then(|&idx| self.nodes[idx].1.as_ref().ok())
+                .and_then(|&idx| self.status_for_index(idx))
                 .and_then(|s| s.consensus.raft.as_ref())
                 .map(|r| r.node_id.as_str());
 
@@ -215,6 +229,44 @@ impl ClusterState {
             reasons.join("; ")
         }
     }
+
+    /// Returns true if all healthy nodes report the same non-empty `last_applied_index`.
+    pub fn all_have_same_last_applied_index_at_or_above(&self, min_index: u64) -> bool {
+        let mut last_applied = self.nodes.iter().filter_map(|(_, result)| {
+            result
+                .as_ref()
+                .ok()?
+                .consensus
+                .raft
+                .as_ref()?
+                .last_applied_index
+        });
+        let Some(first) = last_applied.next() else {
+            return false;
+        };
+        first >= min_index && last_applied.all(|idx| idx == first) && self.all_healthy()
+    }
+
+    pub fn agreed_last_applied_index(&self) -> Option<u64> {
+        let mut last_applied = self.nodes.iter().filter_map(|(_, result)| {
+            result
+                .as_ref()
+                .ok()?
+                .consensus
+                .raft
+                .as_ref()?
+                .last_applied_index
+        });
+        let first = last_applied.next()?;
+        last_applied.all(|idx| idx == first).then_some(first)
+    }
+
+    fn status_for_index(&self, index: usize) -> Option<&StatusResponse> {
+        self.nodes
+            .iter()
+            .find(|(idx, _)| *idx == index)
+            .and_then(|(_, result)| result.as_ref().ok())
+    }
 }
 
 /// Test harness for multi-node consensus testing
@@ -229,6 +281,17 @@ impl MultiNodeTester {
 
     pub fn node(&self, index: usize) -> &Tester {
         &self.nodes[index]
+    }
+
+    /// Shuts down all active nodes and drops suspended ones.
+    pub async fn shutdown_all(self) -> anyhow::Result<()> {
+        for node in self.nodes {
+            if node.is_suspended() {
+                continue;
+            }
+            node.shutdown().await?;
+        }
+        Ok(())
     }
 
     /// Permanently shut down a node and remove it from the cluster.
@@ -263,32 +326,101 @@ impl MultiNodeTester {
         &self,
         timeout: Duration,
     ) -> anyhow::Result<usize> {
+        self.wait_for_raft_cluster_formation_inner(timeout, false)
+            .await
+    }
+
+    /// Same as `wait_for_raft_cluster_formation`, but ignores suspended nodes.
+    pub async fn wait_for_active_raft_cluster_formation(
+        &self,
+        timeout: Duration,
+    ) -> anyhow::Result<usize> {
+        self.wait_for_raft_cluster_formation_inner(timeout, true)
+            .await
+    }
+
+    pub async fn wait_for_active_last_applied_index_convergence(
+        &self,
+        min_index: u64,
+        timeout: Duration,
+    ) -> anyhow::Result<u64> {
         let deadline = Instant::now() + timeout;
         let mut last_summary = String::new();
 
         while Instant::now() < deadline {
-            let cluster_state = ClusterState::collect(&self.nodes).await;
+            let cluster_state = ClusterState::collect_active(&self.nodes).await;
             let summary = cluster_state.summary();
 
             if summary != last_summary {
-                tracing::info!(%summary, "raft cluster formation check");
+                tracing::info!(%summary, min_index, "raft last_applied convergence check");
+                last_summary = summary;
+            }
+
+            if cluster_state.all_have_same_last_applied_index_at_or_above(min_index) {
+                let last_applied = cluster_state
+                    .agreed_last_applied_index()
+                    .expect("checked above");
+                tracing::info!(last_applied, "raft last_applied converged");
+                return Ok(last_applied);
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        let final_state = ClusterState::collect_active(&self.nodes).await;
+
+        tracing::error!(
+            final_statuses = ?final_state.nodes,
+            min_index,
+            "failed to converge raft last_applied index"
+        );
+
+        anyhow::bail!(
+            "timed out waiting for active nodes to converge on last_applied_index >= {min_index}: {}",
+            final_state.summary()
+        )
+    }
+
+    async fn wait_for_raft_cluster_formation_inner(
+        &self,
+        timeout: Duration,
+        active_only: bool,
+    ) -> anyhow::Result<usize> {
+        let deadline = Instant::now() + timeout;
+        let mut last_summary = String::new();
+
+        while Instant::now() < deadline {
+            let cluster_state = if active_only {
+                ClusterState::collect_active(&self.nodes).await
+            } else {
+                ClusterState::collect(&self.nodes).await
+            };
+            let summary = cluster_state.summary();
+
+            if summary != last_summary {
+                tracing::info!(%summary, active_only, "raft cluster formation check");
                 last_summary = summary;
             }
 
             if cluster_state.is_formed() {
                 let leader_index = cluster_state.leader_indices()[0];
-                tracing::info!(leader_index, "raft cluster formed");
+                tracing::info!(leader_index, active_only, "raft cluster formed");
                 return Ok(leader_index);
             }
 
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        let final_state = ClusterState::collect(&self.nodes).await;
+        let final_state = if active_only {
+            ClusterState::collect_active(&self.nodes).await
+        } else {
+            ClusterState::collect(&self.nodes).await
+        };
 
         tracing::error!(
             final_statuses = ?final_state.nodes,
             reason = %final_state.failure_reason(),
+            active_only,
             "failed to form raft cluster"
         );
 
@@ -366,8 +498,6 @@ impl MultiNodeTesterBuilder {
             let boot_nodes: Vec<zksync_os_network::TrustedPeer> =
                 node_records.iter().copied().map(Into::into).collect();
             let network_port = locked_port.port;
-            // Release the lock so launch_node_inner can re-acquire it via Ports::from_config.
-            drop(locked_port);
             let run_batcher_subsystem = i == 0;
             // Launch bootstrap node last so other peers are already up.
             let bootstrap = i + 1 == num_nodes;
@@ -385,7 +515,7 @@ impl MultiNodeTesterBuilder {
                 "starting node..."
             );
 
-            let node = Tester::launch_node(
+            let node = Tester::launch_node_without_wait_with_network_port(
                 l1.clone(),
                 false,
                 Some(move |config: &mut Config| {
@@ -404,6 +534,7 @@ impl MultiNodeTesterBuilder {
                 ChainLayout::Default {
                     protocol_version: PROTOCOL_VERSION,
                 },
+                locked_port,
             )
             .await?;
             let tempdir_path = node.tempdir.path().to_path_buf();

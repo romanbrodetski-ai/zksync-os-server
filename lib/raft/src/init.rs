@@ -1,8 +1,8 @@
 use crate::config::RaftConsensusConfig;
 use crate::leadership_monitor::spawn_leadership_monitor;
 use crate::model::{
-    BlockCanonizationEngine, ConsensusBootstrapper, ConsensusNetworkProtocol, ConsensusRole,
-    ConsensusRuntimeParts, ConsensusStatusSource, LeadershipSignal, OpenRaftCanonizationEngine,
+    BlockCanonizationEngine, ConsensusRole, ConsensusRuntimeParts, LeadershipSignal,
+    OpenRaftCanonizationEngine, RaftRuntimeExtras,
 };
 use crate::network::{RaftNetworkFactory, RaftRpcHandler};
 use crate::state_machine::RaftStateMachineStore;
@@ -92,16 +92,18 @@ pub async fn init_consensus(
             canonized_blocks_rx: canonized_rx,
         }),
         leadership: LeadershipSignal::Watch(leader_rx),
-        network_protocol: ConsensusNetworkProtocol::Raft(protocol_handler),
-        bootstrapper: ConsensusBootstrapper::Raft(crate::bootstrap::RaftBootstrapper {
-            raft: raft.clone(),
-            bootstrap: config.bootstrap,
-            router,
-            node_id,
-            peer_ids,
-            membership_nodes: nodes,
+        raft: Some(RaftRuntimeExtras {
+            protocol_handler,
+            bootstrapper: crate::bootstrap::RaftBootstrapper {
+                raft: raft.clone(),
+                bootstrap: config.bootstrap,
+                router,
+                node_id,
+                peer_ids,
+                membership_nodes: nodes,
+            },
+            status_rx,
         }),
-        status: ConsensusStatusSource::Raft(status_rx),
     })
 }
 
@@ -109,9 +111,7 @@ pub fn loopback_consensus() -> ConsensusRuntimeParts {
     ConsensusRuntimeParts {
         canonization_engine: BlockCanonizationEngine::Noop(NoopCanonization::new()),
         leadership: LeadershipSignal::AlwaysLeader,
-        network_protocol: ConsensusNetworkProtocol::Disabled,
-        bootstrapper: ConsensusBootstrapper::Noop,
-        status: ConsensusStatusSource::None,
+        raft: None,
     }
 }
 

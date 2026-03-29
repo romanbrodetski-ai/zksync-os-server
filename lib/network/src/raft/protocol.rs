@@ -1,5 +1,6 @@
 use crate::raft::wire::{RaftRequest, RaftResponse, RaftWireMessage, RequestId};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use futures::{Stream, StreamExt};
 use reth_eth_wire::multiplex::ProtocolConnection;
 use reth_eth_wire::protocol::Protocol;
@@ -11,12 +12,11 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, ready};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, sleep};
-use dashmap::DashMap;
 
 pub const RAFT_PROTOCOL: &str = "raft";
 const RAFT_PROTOCOL_VERSION: usize = 1;
@@ -231,7 +231,10 @@ impl ConnectionHandler for RaftConnectionHandler {
     type Connection = RaftConnection;
 
     fn protocol(&self) -> Protocol {
-        Protocol::new(Capability::new_static(RAFT_PROTOCOL, RAFT_PROTOCOL_VERSION), RAFT_PROTOCOL_MESSAGE_COUNT)
+        Protocol::new(
+            Capability::new_static(RAFT_PROTOCOL, RAFT_PROTOCOL_VERSION),
+            RAFT_PROTOCOL_MESSAGE_COUNT,
+        )
     }
 
     fn on_unsupported_by_peer(
@@ -268,7 +271,9 @@ pub struct RaftConnection {
     router: RaftRouter,
     outbound_rx: mpsc::UnboundedReceiver<RaftWireMessage>,
     outbound_queue: VecDeque<alloy::primitives::bytes::BytesMut>,
-    inflight: Option<Pin<Box<dyn futures::Future<Output = Option<alloy::primitives::bytes::BytesMut>> + Send>>>,
+    inflight: Option<
+        Pin<Box<dyn futures::Future<Output = Option<alloy::primitives::bytes::BytesMut>> + Send>>,
+    >,
     close_reason: Option<&'static str>,
 }
 
@@ -300,7 +305,9 @@ impl Stream for RaftConnection {
 
         while let Poll::Ready(Some(outbound)) = this.outbound_rx.poll_recv(cx) {
             this.outbound_queue
-                .push_back(alloy::primitives::bytes::BytesMut::from(outbound.encode().as_slice()));
+                .push_back(alloy::primitives::bytes::BytesMut::from(
+                    outbound.encode().as_slice(),
+                ));
             if let Some(buf) = this.outbound_queue.pop_front() {
                 return Poll::Ready(Some(buf));
             }
@@ -310,7 +317,8 @@ impl Stream for RaftConnection {
         let Some(next) = maybe_msg else {
             this.close_reason = Some("protocol_connection_closed_by_peer");
             tracing::info!(peer_id = %this.peer_id, connection_id = this.connection_id, "raft connection closed by peer");
-            this.router.unregister_peer(&this.peer_id, this.connection_id);
+            this.router
+                .unregister_peer(&this.peer_id, this.connection_id);
             return Poll::Ready(None);
         };
 
@@ -342,7 +350,9 @@ impl Stream for RaftConnection {
                 let fut = async move {
                     let resp = handler.handle(req).await;
                     let encoded = RaftWireMessage::Response { id, resp };
-                    Some(alloy::primitives::bytes::BytesMut::from(encoded.encode().as_slice()))
+                    Some(alloy::primitives::bytes::BytesMut::from(
+                        encoded.encode().as_slice(),
+                    ))
                 };
                 this.inflight = Some(Box::pin(fut));
                 // Poll once right away so the future can register its waker. Otherwise this
@@ -373,6 +383,7 @@ impl Drop for RaftConnection {
             pending_requests = self.router.pending.len(),
             "raft connection dropped"
         );
-        self.router.unregister_peer(&self.peer_id, self.connection_id);
+        self.router
+            .unregister_peer(&self.peer_id, self.connection_id);
     }
 }

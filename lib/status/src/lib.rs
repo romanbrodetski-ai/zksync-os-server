@@ -3,7 +3,7 @@ mod status;
 
 use crate::health::health;
 use crate::status::status;
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use reth_tasks::shutdown::GracefulShutdown;
 use std::net::SocketAddr;
 use tokio::{net::TcpListener, sync::watch};

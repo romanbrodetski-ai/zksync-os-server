@@ -1,9 +1,9 @@
 //! An RLPX subprotocol for ZKsync OS functionality.
 
+use crate::raft::wire::RaftWireMessage;
 use crate::version::AnyZksProtocolVersion;
 use crate::wire::message::{ZKS_PROTOCOL, ZksMessage};
 use crate::wire::replays::{RecordOverride, WireReplayRecord};
-use crate::raft::wire::RaftWireMessage;
 use alloy::primitives::BlockNumber;
 use alloy::primitives::bytes::BytesMut;
 use futures::future::BoxFuture;
