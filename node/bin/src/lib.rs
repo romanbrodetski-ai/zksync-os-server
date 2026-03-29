@@ -1014,6 +1014,19 @@ async fn run_main_node_pipeline(
         run_fake_snark_provers(&config.prover_api_config, runtime, snark_job_manager);
     }
 
+    if config
+        .prover_input_generator_config
+        .disable_input_generation
+    {
+        assert!(
+            config.prover_api_config.fake_fri_provers.enabled
+                && config.prover_api_config.fake_snark_provers.enabled,
+            "prover_input_generator_config.disable_input_generation requires both \
+             prover_api_config.fake_fri_provers.enabled and \
+             prover_api_config.fake_snark_provers.enabled to be true"
+        );
+    }
+
     let pipeline = pipeline
         .pipe(ProverInputGenerator {
             enable_logging: config.prover_input_generator_config.logging_enabled,
@@ -1023,6 +1036,9 @@ async fn run_main_node_pipeline(
             read_state: state.clone(),
             pubdata_mode,
             runtime: runtime.clone(),
+            disabled: config
+                .prover_input_generator_config
+                .disable_input_generation,
         })
         .pipe(Batcher {
             startup_config: BatcherStartupConfig {

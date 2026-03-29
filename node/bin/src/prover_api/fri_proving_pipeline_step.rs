@@ -71,7 +71,14 @@ impl PipelineComponent for FriProvingPipelineStep {
         tokio::select! {
             result = async {
                 while let Some(batch) = input.recv().await {
-                    if batch.batch_number() > self.last_proved_batch_number {
+                    if matches!(batch.data, ProverInput::Fake) {
+                        // Prover input generation is disabled — emit a fake FRI proof directly.
+                        tracing::debug!(
+                            batch_number = batch.batch_number(),
+                            "ProverInput::Fake — skipping FRI proving, emitting FriProof::Fake"
+                        );
+                        let _ = output.send(batch.with_data(FriProof::Fake)).await;
+                    } else if batch.batch_number() > self.last_proved_batch_number {
                         tracing::info!(
                             "Received batch for FRI proving: {:?}",
                             batch.batch_number()

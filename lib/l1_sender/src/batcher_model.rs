@@ -180,7 +180,18 @@ impl<E, S> BatchEnvelope<E, S> {
     }
 }
 
-pub type ProverInput = Vec<u32>;
+/// Input data required to generate a ZK proof for a batch.
+///
+/// `Real` contains the actual witness data (a `Vec<u32>`) produced by the prover input
+/// generator.  `Fake` is used when prover input generation is disabled (both FRI and SNARK
+/// provers must be faked in that case) — no witness is produced and the entire proving
+/// pipeline emits fake proofs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ProverInput {
+    Real(Vec<u32>),
+    Fake,
+}
+
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum FriProof {
