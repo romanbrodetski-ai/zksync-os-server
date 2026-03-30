@@ -35,7 +35,8 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .context("failed to connect second signer to L2")?;
     let second_address = second_wallet.default_signer().address();
 
-    // Fund the second wallet so its transaction can remain valid after rebuild.
+    // Fund the second wallet before the sleep so the funding tx gets committed to L1,
+    // keeping the second wallet's nonce stable for the rebuild scenario below.
     tester
         .l2_provider
         .send_transaction(
@@ -46,6 +47,11 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?
         .expect_successful_receipt()
         .await?;
+
+    // Wait a minute so that the blocks produced above get committed to L1. The rebuild scenario
+    // below uses fresh blocks sent after this sleep, which are guaranteed to be above the
+    // last-committed watermark and therefore eligible for rebuild.
+    tokio::time::sleep(Duration::from_secs(60)).await;
 
     let mut primary_last_block = 1;
     for _ in 0..23 {
