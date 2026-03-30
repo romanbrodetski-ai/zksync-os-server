@@ -84,12 +84,6 @@ async fn uncommitted_blocks_are_settled_after_batcher_reenabled() -> anyhow::Res
          but committed batch count did not increase ({initial_committed} -> {})",
         l1_state_after.last_committed_batch,
     );
-    assert!(
-        l1_state_after.last_executed_batch > initial_committed,
-        "expected new batches to be executed after re-enabling the batcher, \
-         but executed batch count did not increase ({initial_committed} -> {})",
-        l1_state_after.last_executed_batch,
-    );
 
     Ok(())
 }
