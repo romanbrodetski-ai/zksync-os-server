@@ -82,12 +82,11 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .block_number
         .expect("second sender receipt should have a block number");
     let block_to_empty = primary_last_block - BLOCKS_FROM_TIP_TO_EMPTY;
-    let block_before_empty = block_to_empty - 1;
     let last_rebuilt_tx_hash = second_sender_receipt.transaction_hash;
 
     let original_previous_block_hash = tester
         .l2_provider
-        .get_block_by_number(block_before_empty.into())
+        .get_block_by_number((block_to_empty - 1).into())
         .await?
         .context("previous block should exist")?
         .header
@@ -152,7 +151,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .context("rebuilt emptied block should exist")?;
     let rebuilt_previous_block_hash = restarted
         .l2_provider
-        .get_block_by_number(block_before_empty.into())
+        .get_block_by_number((block_to_empty - 1).into())
         .await?
         .context("rebuilt previous block should exist")?
         .header
