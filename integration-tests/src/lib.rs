@@ -1051,8 +1051,7 @@ impl GatewayTesterBuilder {
 }
 
 fn prover_input_generation_enabled() -> bool {
-    std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_err()
-        && std::env::var("NEXTEST_PROFILE").as_deref() != Ok("no-pig")
+    std::env::var("NEXTEST_PROFILE").as_deref() != Ok("no-pig")
 }
 
 async fn wait_for_gateway_readiness(
