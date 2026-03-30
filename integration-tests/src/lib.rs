@@ -155,7 +155,7 @@ pub struct Tester {
     sl_provider: EthDynProvider,
     log_state: NodeLogState,
     chain_layout: ChainLayout<'static>,
-    disable_prover_input_generation: bool,
+    enable_prover_input_generation: bool,
     supporting_nodes: Vec<Tester>,
 }
 
@@ -165,7 +165,7 @@ pub struct StoppedTester {
     tempdir: Arc<tempfile::TempDir>,
     log_state: NodeLogState,
     chain_layout: ChainLayout<'static>,
-    disable_prover_input_generation: bool,
+    enable_prover_input_generation: bool,
 }
 
 impl Tester {
@@ -276,7 +276,7 @@ impl Tester {
             tempdir,
             log_state,
             chain_layout,
-            disable_prover_input_generation,
+            enable_prover_input_generation,
             ..
         } = self;
         if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
@@ -287,7 +287,7 @@ impl Tester {
             tempdir,
             log_state,
             chain_layout,
-            disable_prover_input_generation,
+            enable_prover_input_generation,
         })
     }
 
@@ -308,7 +308,7 @@ impl Tester {
     async fn launch_node(
         l1: AnvilL1,
         enable_prover: bool,
-        disable_prover_input_generation: bool,
+        enable_prover_input_generation: bool,
         config_overrides: Option<impl FnOnce(&mut Config)>,
         chain_layout: ChainLayout<'static>,
     ) -> anyhow::Result<Self> {
@@ -316,7 +316,7 @@ impl Tester {
         Self::launch_node_inner(
             l1,
             enable_prover,
-            disable_prover_input_generation,
+            enable_prover_input_generation,
             config_overrides,
             tempdir,
             None,
@@ -328,7 +328,7 @@ impl Tester {
     async fn launch_node_inner(
         l1: AnvilL1,
         enable_prover: bool,
-        disable_prover_input_generation: bool,
+        enable_prover_input_generation: bool,
         config_overrides: Option<impl FnOnce(&mut Config)>,
         tempdir: Arc<TempDir>,
         log_state: Option<NodeLogState>,
@@ -431,7 +431,7 @@ impl Tester {
             batcher_config: default_config.batcher_config,
             prover_input_generator_config: ProverInputGeneratorConfig {
                 logging_enabled: enable_prover,
-                disable_input_generation: disable_prover_input_generation,
+                enable_input_generation: enable_prover_input_generation,
                 ..default_config.prover_input_generator_config
             },
             prover_api_config,
@@ -606,7 +606,7 @@ impl Tester {
             log_state,
             tempdir: tempdir.clone(),
             chain_layout,
-            disable_prover_input_generation,
+            enable_prover_input_generation,
             supporting_nodes: Vec::new(),
         })
     }
@@ -629,7 +629,7 @@ impl StoppedTester {
         Tester::launch_node_inner(
             self.l1,
             false,
-            self.disable_prover_input_generation,
+            self.enable_prover_input_generation,
             None::<fn(&mut Config)>,
             self.tempdir,
             Some(self.log_state.restarted()),
@@ -645,7 +645,7 @@ impl StoppedTester {
         Tester::launch_node_inner(
             self.l1,
             false,
-            self.disable_prover_input_generation,
+            self.enable_prover_input_generation,
             Some(config_overrides),
             self.tempdir,
             Some(self.log_state.restarted()),
@@ -751,15 +751,29 @@ async fn ensure_test_wallet_funded(
     .await
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct NodeBuilderOptions {
     enable_prover: bool,
-    disable_prover_input_generation: bool,
+    enable_prover_input_generation: bool,
     block_time: Option<Duration>,
     batch_verification_threshold: Option<u64>,
     fee_config: Option<FeeConfig>,
     gas_price_scale_factor: Option<f64>,
     estimate_gas_pubdata_price_factor: Option<f64>,
+}
+
+impl Default for NodeBuilderOptions {
+    fn default() -> Self {
+        Self {
+            enable_prover: false,
+            enable_prover_input_generation: true,
+            block_time: None,
+            batch_verification_threshold: None,
+            fee_config: None,
+            gas_price_scale_factor: None,
+            estimate_gas_pubdata_price_factor: None,
+        }
+    }
 }
 
 impl NodeBuilderOptions {
@@ -808,7 +822,7 @@ impl TesterBuilder {
     }
 
     pub fn disable_prover_input_generation(mut self) -> Self {
-        self.options.disable_prover_input_generation = true;
+        self.options.enable_prover_input_generation = false;
         self
     }
 
@@ -855,12 +869,13 @@ impl TesterBuilder {
                 };
                 let l1 = AnvilL1::start(chain_layout).await?;
                 let mut options = self.options;
-                options.disable_prover_input_generation |=
-                    std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_ok();
+                if std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_ok() {
+                    options.enable_prover_input_generation = false;
+                }
                 Tester::launch_node(
                     l1,
                     options.enable_prover,
-                    options.disable_prover_input_generation,
+                    options.enable_prover_input_generation,
                     Some(move |config: &mut Config| options.apply_to_config(config)),
                     chain_layout,
                 )
@@ -868,8 +883,9 @@ impl TesterBuilder {
             }
             SettlementLayer::Gateway => {
                 let mut options = self.options;
-                options.disable_prover_input_generation |=
-                    std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_ok();
+                if std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_ok() {
+                    options.enable_prover_input_generation = false;
+                }
                 let gateway_tester = GatewayTester::builder()
                     .protocol_version(self.protocol_version)
                     .num_chains(1)
@@ -1002,7 +1018,7 @@ impl GatewayTesterBuilder {
             let tester = Tester::launch_node(
                 l1.clone(),
                 chain_options.enable_prover,
-                chain_options.disable_prover_input_generation,
+                chain_options.enable_prover_input_generation,
                 Some(move |config: &mut Config| {
                     config.general_config.gateway_rpc_url = Some(gateway_rpc_url.clone());
                     chain_options.apply_to_config(config);
