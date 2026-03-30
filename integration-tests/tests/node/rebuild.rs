@@ -51,9 +51,8 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .expect_successful_receipt()
         .await?;
 
-    let mut primary_last_block = 1;
     for _ in 0..BLOCKS_TO_PRODUCE_BEFORE_REBUILD {
-        let receipt = tester
+        tester
             .l2_provider
             .send_transaction(
                 TransactionRequest::default()
@@ -63,10 +62,8 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
             .await?
             .expect_successful_receipt()
             .await?;
-        primary_last_block = receipt
-            .block_number
-            .expect("transfer receipt should have a block number");
     }
+    let primary_last_block = tester.l2_provider.get_block_number().await?;
     // Put the second sender into the last historical block so rebuild must preserve at least one
     // unrelated transaction after emptying an older block from the primary sender.
     let second_sender_receipt = second_signer
