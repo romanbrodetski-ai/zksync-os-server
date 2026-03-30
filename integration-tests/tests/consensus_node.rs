@@ -1,7 +1,10 @@
 use std::time::Duration;
+
+use alloy::primitives::U256;
+use alloy::providers::WalletProvider;
+use alloy::rpc::types::TransactionRequest;
 use tokio::time::{Instant, sleep};
 use zksync_os_integration_tests::assert_traits::ReceiptAssert;
-use zksync_os_integration_tests::contracts::EventEmitter;
 use zksync_os_integration_tests::multi_node::MultiNodeTester;
 
 fn consensus_1_nodes_test_keys() -> Vec<zksync_os_network::SecretKey> {
@@ -45,13 +48,21 @@ fn raft_last_applied(
         .ok_or_else(|| anyhow::anyhow!("node {index} did not expose raft status"))
 }
 
-async fn deploy_event_emitter(
+/// Send a simple self-transfer on the given node and wait for the receipt.
+async fn send_transfer(
     cluster: &MultiNodeTester,
     index: usize,
 ) -> anyhow::Result<alloy::rpc::types::TransactionReceipt> {
     cluster.node(index).wait_for_initial_deposit().await?;
-    EventEmitter::deploy_builder(cluster.node(index).l2_provider.clone())
-        .send()
+    let self_addr = cluster.node(index).l2_provider.default_signer_address();
+    cluster
+        .node(index)
+        .l2_provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_to(self_addr)
+                .with_value(U256::from(1u64)),
+        )
         .await?
         .expect_successful_receipt()
         .await
@@ -91,18 +102,30 @@ async fn active_max_last_applied_index(cluster: &MultiNodeTester) -> anyhow::Res
     Ok(max_last_applied)
 }
 
-async fn deploy_event_emitter_and_wait_for_active_replication(
+async fn send_transfer_and_wait_for_active_replication(
     cluster: &MultiNodeTester,
     leader_index: usize,
 ) -> anyhow::Result<u64> {
     let initial_applied = active_max_last_applied_index(cluster).await?;
-    deploy_event_emitter(cluster, leader_index).await?;
+    send_transfer(cluster, leader_index).await?;
     cluster
         .wait_for_active_last_applied_index_convergence(
             initial_applied + 1,
             Duration::from_secs(20),
         )
         .await
+}
+
+/// Send a transaction, wait for replication, and verify all nodes see the same block.
+async fn send_transfer_and_verify_consistent_view(
+    cluster: &MultiNodeTester,
+    leader_index: usize,
+) -> anyhow::Result<u64> {
+    let replicated = send_transfer_and_wait_for_active_replication(cluster, leader_index).await?;
+    cluster
+        .wait_for_consistent_cluster_view(Duration::from_secs(20))
+        .await?;
+    Ok(replicated)
 }
 
 #[test_log::test(tokio::test)]
@@ -116,7 +139,7 @@ async fn consensus_cluster_includes_simple_transaction_with_wait() -> anyhow::Re
             .wait_for_raft_cluster_formation(Duration::from_secs(15))
             .await?;
 
-        deploy_event_emitter(&cluster, leader_index).await?;
+        send_transfer(&cluster, leader_index).await?;
 
         Ok(())
     }
@@ -135,14 +158,11 @@ async fn consensus_cluster_forms_with_three_nodes_and_replicates_blocks() -> any
         let leader_index = cluster
             .wait_for_raft_cluster_formation(Duration::from_secs(20))
             .await?;
-        let mut initial_applied = 0;
-        for idx in 0..cluster.nodes.len() {
-            initial_applied = initial_applied
-                .max(raft_last_applied(&raft_status(&cluster, idx).await?, idx)?.unwrap_or(0));
-        }
 
+        // Send a transaction and verify all nodes converge on the same block view.
+        let initial_applied = active_max_last_applied_index(&cluster).await?;
         let replicated_applied =
-            deploy_event_emitter_and_wait_for_active_replication(&cluster, leader_index).await?;
+            send_transfer_and_verify_consistent_view(&cluster, leader_index).await?;
         assert!(replicated_applied >= initial_applied + 1);
 
         Ok(())
@@ -167,8 +187,13 @@ async fn consensus_cluster_rotates_leader_after_failure() -> anyhow::Result<()> 
             initial_leader_idx,
         )?;
 
+        // Verify transaction works before suspending.
+        send_transfer_and_verify_consistent_view(&cluster, initial_leader_idx).await?;
+
+        // Suspend the leader.
         cluster.suspend_node(initial_leader_idx).await;
 
+        // New leader should be elected.
         let new_leader_idx = cluster
             .wait_for_active_raft_cluster_formation(Duration::from_secs(20))
             .await?;
@@ -176,10 +201,10 @@ async fn consensus_cluster_rotates_leader_after_failure() -> anyhow::Result<()> 
             &raft_status(&cluster, new_leader_idx).await?,
             new_leader_idx,
         )?;
-
         assert_ne!(initial_leader_node_id, new_leader_id);
 
-        deploy_event_emitter_and_wait_for_active_replication(&cluster, new_leader_idx).await?;
+        // Verify transaction works under new leader and nodes agree on state.
+        send_transfer_and_verify_consistent_view(&cluster, new_leader_idx).await?;
 
         Ok(())
     }
@@ -198,8 +223,11 @@ async fn consensus_cluster_stops_making_progress_without_quorum() -> anyhow::Res
         let leader_idx = cluster
             .wait_for_raft_cluster_formation(Duration::from_secs(20))
             .await?;
+
+        // Verify transaction works and all nodes agree before quorum loss.
         let committed_applied =
-            deploy_event_emitter_and_wait_for_active_replication(&cluster, leader_idx).await?;
+            send_transfer_and_verify_consistent_view(&cluster, leader_idx).await?;
+
         let follower_indices: Vec<_> = (0..cluster.nodes.len())
             .filter(|idx| *idx != leader_idx)
             .collect();
@@ -209,6 +237,7 @@ async fn consensus_cluster_stops_making_progress_without_quorum() -> anyhow::Res
             .wait_for_initial_deposit()
             .await?;
 
+        // Suspend leader + one follower → lose quorum.
         cluster.suspend_node(leader_idx).await;
         cluster.suspend_node(follower_indices[0]).await;
 
@@ -245,21 +274,28 @@ async fn consensus_follower_restarts_and_catches_up() -> anyhow::Result<()> {
         let leader_idx = cluster
             .wait_for_raft_cluster_formation(Duration::from_secs(20))
             .await?;
+
+        // Verify transaction works before suspending the follower.
+        send_transfer_and_verify_consistent_view(&cluster, leader_idx).await?;
+
         let follower_idx = (0..cluster.nodes.len())
             .find(|idx| *idx != leader_idx)
             .expect("3-node cluster must have a follower");
 
+        // Suspend one follower.
         cluster.suspend_node(follower_idx).await;
         let active_leader_idx = cluster
             .wait_for_active_raft_cluster_formation(Duration::from_secs(20))
             .await?;
 
-        deploy_event_emitter(&cluster, active_leader_idx).await?;
-        deploy_event_emitter(&cluster, active_leader_idx).await?;
+        // Do transactions while the follower is down.
+        send_transfer(&cluster, active_leader_idx).await?;
+        send_transfer(&cluster, active_leader_idx).await?;
         let target_applied = cluster
             .wait_for_active_last_applied_index_convergence(1, Duration::from_secs(20))
             .await?;
 
+        // Restart the follower and wait for it to catch up.
         cluster.start_node(follower_idx).await?;
         wait_for_node_last_applied_index_at_or_above(
             &cluster,
@@ -268,6 +304,11 @@ async fn consensus_follower_restarts_and_catches_up() -> anyhow::Result<()> {
             Duration::from_secs(20),
         )
         .await?;
+
+        // Verify all nodes (including restarted follower) agree on the same block view.
+        cluster
+            .wait_for_consistent_cluster_view(Duration::from_secs(20))
+            .await?;
 
         Ok(())
     }

@@ -1,5 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
+
+use alloy::eips::BlockNumberOrTag;
+use alloy::primitives::B256;
+use alloy::providers::Provider;
 use tokio::time::Instant;
 use zksync_os_status_server::StatusResponse;
 
@@ -379,6 +383,79 @@ impl MultiNodeTester {
             "timed out waiting for active nodes to converge on last_applied_index >= {min_index}: {}",
             final_state.summary()
         )
+    }
+
+    /// Waits until all active nodes agree on the same latest block number and block hash.
+    /// Returns the agreed-upon (block_number, block_hash) pair.
+    pub async fn wait_for_consistent_cluster_view(
+        &self,
+        timeout: Duration,
+    ) -> anyhow::Result<(u64, B256)> {
+        let deadline = Instant::now() + timeout;
+        let mut last_log = String::new();
+
+        while Instant::now() < deadline {
+            let mut views = Vec::new();
+            let mut ok = true;
+
+            for (idx, node) in self.nodes.iter().enumerate() {
+                if node.is_suspended() {
+                    continue;
+                }
+                match node
+                    .l2_provider
+                    .get_block_by_number(BlockNumberOrTag::Latest)
+                    .await
+                {
+                    Ok(Some(block)) => {
+                        let num = block.header.number;
+                        let hash = block.header.hash;
+                        views.push((idx, num, hash));
+                    }
+                    Ok(None) => {
+                        ok = false;
+                        break;
+                    }
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+
+            if ok && !views.is_empty() {
+                let (_, first_num, first_hash) = views[0];
+                if first_num > 0
+                    && views
+                        .iter()
+                        .all(|(_, n, h)| *n == first_num && *h == first_hash)
+                {
+                    tracing::info!(
+                        block_number = first_num,
+                        block_hash = %first_hash,
+                        "cluster has consistent view"
+                    );
+                    return Ok((first_num, first_hash));
+                }
+
+                let summary = format!(
+                    "views: [{}]",
+                    views
+                        .iter()
+                        .map(|(idx, n, h)| format!("node_{idx}: block={n} hash={h}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                if summary != last_log {
+                    tracing::info!(%summary, "waiting for consistent cluster view");
+                    last_log = summary;
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        anyhow::bail!("timed out waiting for consistent cluster view across active nodes")
     }
 
     async fn wait_for_raft_cluster_formation_inner(
