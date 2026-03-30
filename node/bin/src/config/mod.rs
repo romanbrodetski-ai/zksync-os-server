@@ -865,12 +865,9 @@ pub struct ProverInputGeneratorConfig {
     #[config(default_t = 16)]
     pub maximum_in_flight_blocks: usize,
 
-    /// When false, skip prover input generation entirely and pass `ProverInput::Fake` through
-    /// the pipeline. Used for tests and testnets where the expensive RiscV witness computation
+    /// When false, skip prover input generation and emit `ProverInput::Fake` instead.
+    /// Used for tests and some testnets where the expensive RiscV witness computation
     /// is unnecessary.
-    ///
-    /// Requires both `prover_api_config.fake_fri_provers.enabled` and
-    /// `prover_api_config.fake_snark_provers.enabled` to be `true` when set to `false`.
     #[config(default_t = true)]
     pub enable_input_generation: bool,
 }
