@@ -12,6 +12,9 @@ use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::{CURRENT_TO_L1, Tester, test_multisetup};
 use zksync_os_server::config::RebuildBlocksConfig;
 
+const HISTORICAL_BLOCK_COUNT: usize = 30;
+const BLOCKS_FROM_TIP_TO_EMPTY: u64 = 10;
+
 #[test_multisetup([CURRENT_TO_L1])]
 #[test_runtime(flavor = "multi_thread")]
 async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() -> anyhow::Result<()>
@@ -48,7 +51,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?;
 
     let mut primary_last_block = 1;
-    for _ in 0..23 {
+    for _ in 0..HISTORICAL_BLOCK_COUNT {
         let receipt = tester
             .l2_provider
             .send_transaction(
@@ -77,8 +80,17 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
     let last_rebuilt_block = second_sender_receipt
         .block_number
         .expect("second sender receipt should have a block number");
-    let block_to_empty = primary_last_block - 4;
+    let block_to_empty = primary_last_block - BLOCKS_FROM_TIP_TO_EMPTY;
+    let block_before_empty = block_to_empty - 1;
     let last_rebuilt_tx_hash = second_sender_receipt.transaction_hash;
+
+    let original_previous_block_hash = tester
+        .l2_provider
+        .get_block_by_number(block_before_empty.into())
+        .await?
+        .context("previous block should exist")?
+        .header
+        .hash_slow();
 
     let original_emptied_block_hash = tester
         .l2_provider
@@ -137,6 +149,13 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .get_block_by_number(block_to_empty.into())
         .await?
         .context("rebuilt emptied block should exist")?;
+    let rebuilt_previous_block_hash = restarted
+        .l2_provider
+        .get_block_by_number(block_before_empty.into())
+        .await?
+        .context("rebuilt previous block should exist")?
+        .header
+        .hash_slow();
     let rebuilt_emptied_block_tx_count = restarted
         .l2_provider
         .get_block_transaction_count_by_number(block_to_empty.into())
@@ -158,6 +177,10 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
     assert_eq!(
         rebuilt_emptied_block_tx_count, 0,
         "emptied block should be rebuilt without transactions"
+    );
+    assert_eq!(
+        rebuilt_previous_block_hash, original_previous_block_hash,
+        "block before the emptied block should remain unchanged"
     );
     assert_ne!(
         rebuilt_last_block_hash, original_last_block_hash,
