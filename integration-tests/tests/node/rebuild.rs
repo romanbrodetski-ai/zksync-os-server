@@ -12,8 +12,8 @@ use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::{CURRENT_TO_L1, Tester, test_multisetup};
 use zksync_os_server::config::RebuildBlocksConfig;
 
-const BLOCKS_TO_MINE_BEFORE_REBUILD: u64 = 30;
-const BLOCKS_FROM_TIP_TO_EMPTY: u64 = 10;
+const BLOCKS_TO_MINE_BEFORE_REBUILD: u64 = 10;
+const BLOCKS_FROM_TIP_TO_EMPTY: u64 = 4;
 const TRANSACTION_SEND_INTERVAL: Duration = Duration::from_millis(5);
 
 #[test_multisetup([CURRENT_TO_L1])]
