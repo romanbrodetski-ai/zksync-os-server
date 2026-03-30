@@ -285,7 +285,7 @@ impl Tester {
     ///
     /// Returns a new `Tester` connected to the restarted node. The original `Tester` is consumed.
     ///
-    /// Restart keeps the same config by default. The internal P2P network port may change.
+    /// Restart keeps the same config by default, including the original ports.
     pub async fn stop(self) -> anyhow::Result<StoppedTester> {
         // Drop all fields that might rely on node being alive (e.g. alloy provider that uses RPC).
         let Self {
