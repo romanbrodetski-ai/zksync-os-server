@@ -488,6 +488,7 @@ impl Tester {
         let log_state = log_state.unwrap_or_else(|| NodeLogState::fresh(node_role));
         let log_tag = log_state.tag();
         let gateway_rpc_url = config.general_config.gateway_rpc_url.clone();
+        let network_port = config.network_config.port;
         #[cfg(feature = "prover-tests")]
         let prover_api_address = config.prover_api_config.address.clone();
 
@@ -636,7 +637,7 @@ impl Tester {
             sl_provider,
             node_record,
             log_state,
-            network_port: config.network_config.port,
+            network_port,
             tempdir: tempdir.clone(),
             chain_layout,
             supporting_nodes: Vec::new(),
