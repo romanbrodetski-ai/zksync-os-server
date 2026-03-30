@@ -274,7 +274,9 @@ impl Tester {
         Self::launch_node(
             self.l1.clone(),
             false,
-            self.enable_prover_input_generation,
+            self.config
+                .prover_input_generator_config
+                .enable_input_generation,
             Some(overrides_fun),
             self.chain_layout,
         )
