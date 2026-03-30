@@ -12,8 +12,9 @@ use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::{CURRENT_TO_L1, Tester, test_multisetup};
 use zksync_os_server::config::RebuildBlocksConfig;
 
-const BLOCKS_TO_PRODUCE_BEFORE_REBUILD: usize = 30;
+const BLOCKS_TO_MINE_BEFORE_REBUILD: u64 = 30;
 const BLOCKS_FROM_TIP_TO_EMPTY: u64 = 10;
+const TRANSACTION_SEND_INTERVAL: Duration = Duration::from_millis(5);
 
 #[test_multisetup([CURRENT_TO_L1])]
 #[test_runtime(flavor = "multi_thread")]
@@ -51,8 +52,11 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .expect_successful_receipt()
         .await?;
 
-    for _ in 0..BLOCKS_TO_PRODUCE_BEFORE_REBUILD {
-        tester
+    let target_primary_last_block =
+        tester.l2_provider.get_block_number().await? + BLOCKS_TO_MINE_BEFORE_REBUILD;
+    let mut primary_last_block = tester.l2_provider.get_block_number().await?;
+    while primary_last_block < target_primary_last_block {
+        let receipt = tester
             .l2_provider
             .send_transaction(
                 TransactionRequest::default()
@@ -62,8 +66,11 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
             .await?
             .expect_successful_receipt()
             .await?;
+        primary_last_block = receipt
+            .block_number
+            .expect("transfer receipt should have a block number");
+        tokio::time::sleep(TRANSACTION_SEND_INTERVAL).await;
     }
-    let primary_last_block = tester.l2_provider.get_block_number().await?;
     // Put the second sender into the last historical block so rebuild must preserve at least one
     // unrelated transaction after emptying an older block from the primary sender.
     let second_sender_receipt = second_signer
@@ -79,7 +86,6 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .block_number
         .expect("second sender receipt should have a block number");
     let block_to_empty = primary_last_block - BLOCKS_FROM_TIP_TO_EMPTY;
-    let last_rebuilt_tx_hash = second_sender_receipt.transaction_hash;
 
     let original_previous_block_hash = tester
         .l2_provider
@@ -160,7 +166,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .context("rebuilt emptied block tx count should exist")?;
     let rebuilt_last_tx = restarted
         .l2_provider
-        .get_transaction_by_hash(last_rebuilt_tx_hash)
+        .get_transaction_by_hash(second_sender_receipt.transaction_hash)
         .await?
         .context("rebuilt last transaction should exist")?;
     let rebuilt_emptied_block_hash = rebuilt_emptied_block.header.hash;
@@ -200,7 +206,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         last_rebuilt_block,
         original_last_block_hash,
         rebuilt_last_block_hash,
-        last_rebuilt_tx_hash,
+        second_sender_receipt.transaction_hash,
         rebuilt_last_tx.block_number,
     );
     Ok(())
