@@ -12,7 +12,7 @@ use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::{CURRENT_TO_L1, Tester, test_multisetup};
 use zksync_os_server::config::RebuildBlocksConfig;
 
-const HISTORICAL_BLOCK_COUNT: usize = 30;
+const BLOCKS_TO_PRODUCE_BEFORE_REBUILD: usize = 30;
 const BLOCKS_FROM_TIP_TO_EMPTY: u64 = 10;
 
 #[test_multisetup([CURRENT_TO_L1])]
@@ -51,7 +51,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?;
 
     let mut primary_last_block = 1;
-    for _ in 0..HISTORICAL_BLOCK_COUNT {
+    for _ in 0..BLOCKS_TO_PRODUCE_BEFORE_REBUILD {
         let receipt = tester
             .l2_provider
             .send_transaction(
