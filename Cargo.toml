@@ -19,6 +19,7 @@ members = [
     "lib/storage_api",
     "lib/types",
     "node/bin",
+    "node/config-validation-macros",
     "integration-tests",
     "integration-tests-macros",
     "tools/generate-deposit",
@@ -254,6 +255,7 @@ zksync_os_l1_watcher = { version = "=0.18.0", path = "lib/l1_watcher" }
 zksync_os_mempool = { version = "=0.18.0", path = "lib/mempool" }
 zksync_os_mini_merkle_tree = { version = "=0.18.0", path = "lib/mini_merkle_tree" }
 zksync_os_merkle_tree = { version = "=0.18.0", path = "lib/merkle_tree" }
+zksync_os_config_validation_macros = { version = "=0.18.0", path = "node/config-validation-macros" }
 zksync_os_merkle_tree_api = { version = "=0.18.0", path = "lib/merkle_tree_api" }
 zksync_os_priority_tree = { version = "=0.18.0", path = "lib/priority_tree" }
 zksync_os_observability = { version = "=0.18.0", path = "lib/observability" }
