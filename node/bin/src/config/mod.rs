@@ -830,6 +830,13 @@ pub struct MempoolTxValidatorConfig {
 #[derive(Clone, Debug, DescribeConfig, DeserializeConfig)]
 #[config(derive(Default))]
 pub struct BatcherConfig {
+    /// Whether to run the batcher subsystem and all downstream components (prover input
+    /// generation, L1 settlement, priority tree, etc.). Defaults to `true`.
+    /// Set to `false` to run the node without committing batches to L1 — useful for
+    /// testing or operating a read-only / replay-only node.
+    #[config(default_t = true)]
+    pub enabled: bool,
+
     /// How long to keep a batch open before sealing it.
     /// On mainnet environments with low load, consider setting a higher value (e.g. 3 hours),
     /// as L1 settlement has a non-trivial gas overhead per each batch.
