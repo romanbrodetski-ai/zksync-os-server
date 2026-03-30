@@ -176,7 +176,10 @@ async fn revert_batches_on_l1(stopped: &StoppedTester, new_last_batch: u64) -> a
 #[test_multisetup([CURRENT_TO_L1])]
 #[test_runtime(flavor = "multi_thread")]
 async fn node_stop_and_restart_preserves_state() -> anyhow::Result<()> {
-    let tester = Tester::builder().build().await?;
+    let tester = Tester::builder()
+        .disable_prover_input_generation()
+        .build()
+        .await?;
 
     // Send a transaction and wait for it to be included.
     let receipt = tester
