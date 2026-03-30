@@ -284,7 +284,7 @@ pub async fn execute_block_in_vm<V: ViewState>(
                                         purged_txs.push((*tx.hash(), e.clone()));
                                         tracing::info!(
                                             block_number = ctx.block_number,
-                                            "Block {} hit sealing criterion on first invalid L2 tx {}: reason={reason:?}, error={e:?}, source_marked_invalid={}, nonce={:?}; rejecting tx instead of sealing",
+                                            "Block {} hit a sealing criterion while processing first L2 tx {}: reason={reason:?}, error={e:?}, source_marked_invalid={}, nonce={:?}; rejecting tx instead of sealing",
                                             ctx.block_number,
                                             tx.hash(),
                                             mark_in_source,
@@ -294,7 +294,7 @@ pub async fn execute_block_in_vm<V: ViewState>(
                                     (TxRejectionMethod::SealBlock(reason), _, _) => {
                                         tracing::info!(
                                             block_number = ctx.block_number,
-                                            "Sealing block {} after invalid L2 tx {}: reason={reason:?}, error={e:?}, nonce={:?}",
+                                            "Sealing block {} before L2 tx {} because it hit a sealing criterion: reason={reason:?}, error={e:?}, nonce={:?}",
                                             ctx.block_number,
                                             tx.hash(),
                                             tx.nonce(),
