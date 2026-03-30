@@ -90,7 +90,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?
         .context("previous block should exist")?
         .header
-        .hash_slow();
+        .hash;
 
     let original_emptied_block_hash = tester
         .l2_provider
@@ -98,7 +98,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?
         .context("original block should exist")?
         .header
-        .hash_slow();
+        .hash;
 
     let original_last_block_hash = tester
         .l2_provider
@@ -106,7 +106,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?
         .context("last block should exist")?
         .header
-        .hash_slow();
+        .hash;
 
     let restarted = tester
         .restart_with_overrides(|config| {
@@ -124,7 +124,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
             .get_block_by_number(last_rebuilt_block.into())
             .await?
             .context("rebuilt last block should exist")?;
-        let rebuilt_last_block_hash = rebuilt_last_block.header.hash_slow();
+        let rebuilt_last_block_hash = rebuilt_last_block.header.hash;
 
         if rebuilt_last_block_hash != original_last_block_hash {
             Ok(rebuilt_last_block)
@@ -155,7 +155,7 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .await?
         .context("rebuilt previous block should exist")?
         .header
-        .hash_slow();
+        .hash;
     let rebuilt_emptied_block_tx_count = restarted
         .l2_provider
         .get_block_transaction_count_by_number(block_to_empty.into())
@@ -166,8 +166,8 @@ async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() ->
         .get_transaction_by_hash(last_rebuilt_tx_hash)
         .await?
         .context("rebuilt last transaction should exist")?;
-    let rebuilt_emptied_block_hash = rebuilt_emptied_block.header.hash_slow();
-    let rebuilt_last_block_hash = rebuilt_last_block.header.hash_slow();
+    let rebuilt_emptied_block_hash = rebuilt_emptied_block.header.hash;
+    let rebuilt_last_block_hash = rebuilt_last_block.header.hash;
     let rebuild_elapsed = rebuild_started_at.elapsed();
 
     assert_ne!(
