@@ -821,11 +821,6 @@ impl TesterBuilder {
         self
     }
 
-    pub fn disable_prover_input_generation(mut self) -> Self {
-        self.options.enable_prover_input_generation = false;
-        self
-    }
-
     pub fn block_time(mut self, block_time: Duration) -> Self {
         self.options.block_time = Some(block_time);
         self
