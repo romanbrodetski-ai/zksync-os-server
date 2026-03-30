@@ -19,10 +19,11 @@ const BLOCKS_FROM_TIP_TO_EMPTY: u64 = 10;
 #[test_runtime(flavor = "multi_thread")]
 async fn rebuild_after_emptying_historical_block_preserves_unrelated_l2_txs() -> anyhow::Result<()>
 {
-    let tester = Tester::builder()
-        .block_time(Duration::from_millis(50))
-        .build()
-        .await?;
+    let tester = Tester::setup_with_overrides(|config| {
+        config.batcher_config.enabled = false;
+        config.sequencer_config.block_time = Duration::from_millis(50);
+    })
+    .await?;
 
     // This test empties an older block from the main sender, which makes that sender's later
     // transactions invalid because their nonces become too high. A second sender contributes the
