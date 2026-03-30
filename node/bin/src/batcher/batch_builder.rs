@@ -74,9 +74,6 @@ pub(crate) fn seal_batch<ReadState: ReadStateHistory>(
         }
     }
 
-    use zk_os_forward_system::run::generate_batch_proof_input;
-    use zk_os_forward_system_dev::run::generate_batch_proof_input as generate_batch_proof_input_dev;
-
     let proving_version =
         ProvingVersion::try_from(blocks.first().unwrap().1.protocol_version.clone())?;
     // execution version should be the same for all the blocks, it is ensured by the seal criteria
