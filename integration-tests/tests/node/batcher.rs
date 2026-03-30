@@ -8,6 +8,8 @@ use zksync_os_integration_tests::assert_traits::{DEFAULT_TIMEOUT, ReceiptAssert}
 use zksync_os_integration_tests::provider::{ZksyncApi, ZksyncTestingProvider};
 use zksync_os_integration_tests::{CURRENT_TO_L1, Tester, test_multisetup};
 
+const TRANSACTIONS_TO_SEND_BEFORE_RESTART: usize = 5;
+
 async fn fetch_l1_state(tester: &Tester) -> anyhow::Result<L1State> {
     let chain_id = tester.l2_provider.get_chain_id().await?;
     let bridgehub_address = tester.l2_zk_provider.get_bridgehub_contract().await?;
@@ -42,7 +44,7 @@ async fn uncommitted_blocks_are_settled_after_batcher_reenabled() -> anyhow::Res
     let initial_committed = fetch_l1_state(&tester).await?.last_committed_batch;
 
     // Mine several blocks while the batcher is off.
-    for _ in 0..5 {
+    for _ in 0..TRANSACTIONS_TO_SEND_BEFORE_RESTART {
         tester
             .l2_provider
             .send_transaction(
@@ -73,6 +75,21 @@ async fn uncommitted_blocks_are_settled_after_batcher_reenabled() -> anyhow::Res
         .l2_zk_provider
         .wait_finalized_with_timeout(last_pre_restart_block, DEFAULT_TIMEOUT)
         .await?;
+
+    // Confirm via L1 state that new batches were actually committed and executed.
+    let l1_state_after = fetch_l1_state(&restarted).await?;
+    assert!(
+        l1_state_after.last_committed_batch > initial_committed,
+        "expected new batches to be committed after re-enabling the batcher, \
+         but committed batch count did not increase ({initial_committed} -> {})",
+        l1_state_after.last_committed_batch,
+    );
+    assert!(
+        l1_state_after.last_executed_batch > initial_committed,
+        "expected new batches to be executed after re-enabling the batcher, \
+         but executed batch count did not increase ({initial_committed} -> {})",
+        l1_state_after.last_executed_batch,
+    );
 
     Ok(())
 }
