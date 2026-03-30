@@ -981,7 +981,9 @@ async fn run_main_node_pipeline(
         .pipe(TreeManager { tree: tree.clone() });
 
     if !config.batcher_config.enabled {
-        tracing::warn!("Batcher subsystem disabled — skipping prover input generation, L1 settlement, and downstream components");
+        tracing::warn!(
+            "Batcher subsystem disabled — skipping prover input generation, L1 settlement, and downstream components"
+        );
         pipeline.pipe(NoOpSink::new()).spawn();
         return;
     }
