@@ -854,7 +854,9 @@ impl TesterBuilder {
                     protocol_version: self.protocol_version,
                 };
                 let l1 = AnvilL1::start(chain_layout).await?;
-                let options = self.options;
+                let mut options = self.options;
+                options.disable_prover_input_generation |=
+                    std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_ok();
                 Tester::launch_node(
                     l1,
                     options.enable_prover,
@@ -865,10 +867,13 @@ impl TesterBuilder {
                 .await
             }
             SettlementLayer::Gateway => {
+                let mut options = self.options;
+                options.disable_prover_input_generation |=
+                    std::env::var("DISABLE_PROVER_INPUT_GENERATION").is_ok();
                 let gateway_tester = GatewayTester::builder()
                     .protocol_version(self.protocol_version)
                     .num_chains(1)
-                    .chain_options(self.options)
+                    .chain_options(options)
                     .build()
                     .await?;
                 Ok(gateway_tester.into_primary_chain())
