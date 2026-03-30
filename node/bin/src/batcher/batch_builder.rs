@@ -80,10 +80,17 @@ pub(crate) fn seal_batch<ReadState: ReadStateHistory>(
     let proving_version =
         ProvingVersion::try_from(blocks.first().unwrap().1.protocol_version.clone())?;
     // execution version should be the same for all the blocks, it is ensured by the seal criteria
-    let batch_prover_input: ProverInput = if blocks
+    let all_fake = blocks
         .iter()
-        .any(|(_, _, _, pi)| matches!(pi, ProverInput::Fake))
-    {
+        .all(|(_, _, _, pi)| matches!(pi, ProverInput::Fake));
+    let all_real = blocks
+        .iter()
+        .all(|(_, _, _, pi)| matches!(pi, ProverInput::Real(_)));
+    assert!(
+        all_fake || all_real,
+        "batch contains mixed ProverInput::Real and ProverInput::Fake blocks — this is a bug"
+    );
+    let batch_prover_input: ProverInput = if all_fake {
         ProverInput::Fake
     } else {
         match proving_version {

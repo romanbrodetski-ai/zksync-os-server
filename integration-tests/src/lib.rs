@@ -216,7 +216,7 @@ impl Tester {
             protocol_version: PROTOCOL_VERSION,
         };
         let l1 = AnvilL1::start(chain_layout).await?;
-        Self::launch_node(l1, false, false, Some(config_overrides), chain_layout).await
+        Self::launch_node(l1, false, true, Some(config_overrides), chain_layout).await
     }
 
     pub fn l2_rpc_url(&self) -> &str {
@@ -256,7 +256,7 @@ impl Tester {
         Self::launch_node(
             self.l1.clone(),
             false,
-            false,
+            true,
             Some(overrides_fun),
             self.chain_layout,
         )
@@ -992,7 +992,7 @@ impl GatewayTesterBuilder {
         let gateway = Tester::launch_node(
             l1.clone(),
             false,
-            false,
+            true,
             None::<fn(&mut Config)>,
             ChainLayout::Gateway { protocol_version },
         )

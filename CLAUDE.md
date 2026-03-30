@@ -37,7 +37,7 @@ cargo run --release
 1. **Format**: `cargo fmt --all --check`
 2. **Lint**: `cargo clippy --all-targets --all-features --workspace -- -D warnings`
 3. **Unit tests**: `cargo nextest run --release --workspace --exclude zksync_os_integration_tests`
-4. **Integration tests**: `cargo nextest run -p zksync_os_integration_tests --profile no-pig` (no live anvil needed — each test manages its own L1/node)
+4. **Integration tests**: `cargo nextest run -p zksync_os_integration_tests` (no live anvil needed — each test manages its own L1/node; use `--profile no-pig` only for a faster lightweight run)
 
 Running every single one of these checks is critically important. CI will catch failures, but catching them locally before pushing saves everyone time and keeps the branch green.
 
