@@ -457,7 +457,10 @@ impl HttpRpcStableSpanBuilder {
         self.min_latency = self.min_latency.min(sample.latency);
         self.max_latency = self.max_latency.max(sample.latency);
         if !sample.is_ready() {
-            *self.error_counts.entry(sample.status.short_label()).or_default() += 1;
+            *self
+                .error_counts
+                .entry(sample.status.short_label())
+                .or_default() += 1;
         }
     }
 
@@ -571,10 +574,7 @@ impl HttpRpcTransition {
                     block_number,
                     block_hash: old_block_hash,
                 }),
-                HttpRpcState::Available {
-                    block_hash,
-                    ..
-                },
+                HttpRpcState::Available { block_hash, .. },
             ) => format!(
                 "latest block hash changed at block {block_number}: {} -> {}",
                 short_hash(old_block_hash),
@@ -696,19 +696,16 @@ fn format_transition(
     previous_transition_at: Option<Duration>,
 ) -> String {
     let elapsed = format_elapsed(transition.observed_at);
-    let header = previous_transition_at.map(|previous| {
-        format!(
-            "{} (after {})",
-            elapsed,
-            format_elapsed(transition.observed_at.saturating_sub(previous))
-        )
-    }).unwrap_or(elapsed);
-    format!(
-        "{:>8} | {}{}",
-        header,
-        transition.description,
-        ""
-    )
+    let header = previous_transition_at
+        .map(|previous| {
+            format!(
+                "{} (after {})",
+                elapsed,
+                format_elapsed(transition.observed_at.saturating_sub(previous))
+            )
+        })
+        .unwrap_or(elapsed);
+    format!("{:>8} | {}{}", header, transition.description, "")
 }
 
 async fn sample_http_rpc(
