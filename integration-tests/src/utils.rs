@@ -3,7 +3,7 @@ use fs2::FileExt;
 use std::{
     fs::File,
     io::ErrorKind,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddrV4, UdpSocket},
 };
 use tokio::net::TcpListener;
 
@@ -17,13 +17,16 @@ impl LockedPort {
     /// Returns the unused port (same value as input, except for `0`).
     async fn check_port_is_unused(port: u16) -> anyhow::Result<u16> {
         let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-        let listener = TcpListener::bind(addr)
+        let tcp_listener = TcpListener::bind(addr)
             .await
             .with_context(|| format!("failed to bind to port={port}"))?;
-        let port = listener
+        let port = tcp_listener
             .local_addr()
             .context("failed to get local address for random port")?
             .port();
+        let udp_socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+            .with_context(|| format!("failed to bind UDP socket to port={port}"))?;
+        drop(udp_socket);
         Ok(port)
     }
 
