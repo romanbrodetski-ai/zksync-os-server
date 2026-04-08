@@ -313,7 +313,7 @@ impl Tester {
         // Drop all fields that might rely on node being alive (e.g. alloy provider that uses RPC).
         let Self {
             runtime,
-            task_manager_handle,
+            task_manager_handle: _,
             l1,
             tempdir,
             log_state,
@@ -321,7 +321,6 @@ impl Tester {
             enable_prover_input_generation,
             ..
         } = self;
-        drop(task_manager_handle);
         if !runtime.graceful_shutdown_with_timeout(NODE_SHUTDOWN_TIMEOUT) {
             panic!("node failed to shutdown in time");
         }
