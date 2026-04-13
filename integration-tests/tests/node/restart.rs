@@ -75,7 +75,7 @@ fn make_full_pipeline_config(config: &mut Config) {
     config.prover_api_config.fake_snark_provers.max_batch_age = Duration::ZERO;
 }
 
-fn configure_failing_block(config: &mut Config, failing_block: u64) {
+fn configure_failing_block(config: &Config, failing_block: u64) {
     let internal_config_path = config
         .general_config
         .rocks_db_path
@@ -198,7 +198,8 @@ async fn revert_batches_on_l1(stopped: &StoppedTester, new_last_batch: u64) -> a
 #[test_multisetup([CURRENT_TO_L1])]
 #[test_runtime(flavor = "multi_thread")]
 async fn node_stop_and_restart_preserves_state() -> anyhow::Result<()> {
-    let tester = Tester::builder().build().await?;
+    let tester = Tester::setup().await?;
+    let original_rpc_url = tester.l2_rpc_url().to_owned();
 
     // Send a transaction and wait for it to be included.
     let receipt = tester
@@ -215,6 +216,7 @@ async fn node_stop_and_restart_preserves_state() -> anyhow::Result<()> {
 
     // Restart the same node (same DB, same L1).
     let restarted = tester.restart().await?;
+    assert_eq!(restarted.l2_rpc_url(), original_rpc_url);
     // Wait for receipt's block to be available. It might not be immediately available because
     // repository DB did not persist the receipt during previous run.
     restarted
@@ -235,7 +237,10 @@ async fn node_stop_and_restart_preserves_state() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn node_recovers_from_l1_batch_revert_after_restart_v30() -> anyhow::Result<()> {
-    let tester = Tester::setup_with_overrides(make_commit_only_config).await?;
+    let env = CURRENT_TO_L1.environment().await?;
+    let mut config = env.default_config().await?;
+    make_commit_only_config(&mut config);
+    let tester = env.launch(config).await?;
 
     tester
         .l2_provider
@@ -270,7 +275,9 @@ async fn node_recovers_from_l1_batch_revert_after_restart_v30() -> anyhow::Resul
     let stopped = tester.stop().await?;
     revert_batches_on_l1(&stopped, committed_state.last_executed_batch).await?;
 
-    let restarted = stopped.start_with_overrides(disable_commits_config).await?;
+    let mut restarted_config = stopped.config().clone();
+    disable_commits_config(&mut restarted_config);
+    let restarted = stopped.start_with_config(restarted_config).await?;
     let safe_after_revert =
         block_number_by_id(&restarted, BlockId::Number(BlockNumberOrTag::Safe)).await?;
     assert_eq!(
@@ -293,9 +300,9 @@ async fn node_recovers_from_l1_batch_revert_after_restart_v30() -> anyhow::Resul
         );
     }
 
-    let restarted = restarted
-        .restart_with_overrides(make_full_pipeline_config)
-        .await?;
+    let mut restarted_config = restarted.config().clone();
+    make_full_pipeline_config(&mut restarted_config);
+    let restarted = restarted.restart_with_config(restarted_config).await?;
 
     let executed_receipt = restarted
         .l2_provider
@@ -337,11 +344,11 @@ async fn node_recovers_from_l1_batch_revert_after_restart_v30() -> anyhow::Resul
 #[test_multisetup([CURRENT_TO_L1])]
 #[test_runtime(flavor = "multi_thread")]
 async fn tester_reports_fatal_node_error() -> anyhow::Result<()> {
-    let mut tester = Tester::setup_with_overrides(|config| {
-        make_full_pipeline_config(config);
-        configure_failing_block(config, 1);
-    })
-    .await?;
+    let env = CURRENT_TO_L1.environment().await?;
+    let mut config = env.default_config().await?;
+    make_full_pipeline_config(&mut config);
+    configure_failing_block(&config, 1);
+    let mut tester = env.launch(config).await?;
 
     tester
         .l2_provider
