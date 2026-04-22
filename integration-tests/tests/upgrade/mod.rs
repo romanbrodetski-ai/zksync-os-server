@@ -134,10 +134,9 @@ async fn upgrade_to_v31_with_deployments() -> anyhow::Result<()> {
     let tester = Tester::setup().await?;
     let upgrade_tester = UpgradeTester::for_default_upgrade(&tester).await?;
 
-    // Publish the bytecodes for upgrade beforehand.
-    // TODO: we need to use bytecode instead of deployed bytecode for now, since under the hood `publish_bytecodes`
-    // actually deploys contracts since BytecodesSupplier is not ready for zksync os
-    // Once this is fixed, also check the logic for `ForceDeploymentBytecodeInfo` in the builder.
+    // Pre-register the force-deployment bytecode via an L2 create tx.
+    // This test exercises the legacy path where the node already knows the preimage
+    // and the upgrade tx does not carry `factory_deps`.
     upgrade_tester
         .publish_bytecodes([SampleForceDeployment::BYTECODE.clone()])
         .await?;
@@ -227,20 +226,22 @@ async fn upgrade_to_v32_with_deployments_settles_to_gateway() -> anyhow::Result<
         .await?;
     let upgrade_tester = UpgradeTester::for_default_upgrade(gateway_tester.chain(0)).await?;
 
-    // Publish the bytecodes for upgrade beforehand.
-    // TODO: we need to use bytecode instead of deployed bytecode for now, since under the hood `publish_bytecodes`
-    // actually deploys contracts since BytecodesSupplier is not ready for zksync os
-    // Once this is fixed, also check the logic for `ForceDeploymentBytecodeInfo` in the builder.
+    // Publish the raw runtime bytecode from the force-deployment payload to the
+    // L1 BytecodesSupplier. This exercises the supplier-backed path where the
+    // node discovers force-deployment preimages from `EVMBytecodePublished`
+    // events using the upgrade tx `factory_deps`.
     upgrade_tester
-        .publish_bytecodes([SampleForceDeployment::BYTECODE.clone()])
+        .publish_bytecodes_to_l1_supplier([SampleForceDeployment::DEPLOYED_BYTECODE.clone()])
         .await?;
 
-    // Prepare protocol upgrade
+    // Prepare protocol upgrade with `factory_deps` so the node fetches preimages
+    // from the supplier instead of relying on a prior L2 deployment.
     let protocol_upgrade = upgrade_tester
         .protocol_upgrade_builder()
         .await?
         .bump_minor(1)
         .with_force_deployments(force_deployments)
+        .with_factory_deps()
         .with_timestamp(upgrade_timestamp)
         .build();
 
