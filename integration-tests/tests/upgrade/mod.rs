@@ -19,7 +19,6 @@ async fn upgrade_patch_no_deployments() -> anyhow::Result<()> {
     let upgrade_timestamp = U256::from(1); // Protocol upgrade can be executed immediately.
     let deadline = U256::MAX; // The protocol version will not have any deadline in this upgrade
 
-    // Test that we can deposit L2 funds from a rich L1 account
     let tester = Tester::setup().await?;
     let upgrade_tester = UpgradeTester::for_default_upgrade(&tester).await?;
 
@@ -50,7 +49,6 @@ async fn upgrade_patch_no_deployments_gateway() -> anyhow::Result<()> {
     let upgrade_timestamp = U256::from(1); // Protocol upgrade can be executed immediately.
     let deadline = U256::MAX; // The protocol version will not have any deadline in this upgrade
 
-    // Test that we can deposit L2 funds from a rich L1 account
     let gateway_tester = GatewayTester::builder()
         .protocol_version(NEXT_PROTOCOL_VERSION)
         .num_chains(0)
@@ -130,7 +128,6 @@ async fn upgrade_to_v31_with_deployments() -> anyhow::Result<()> {
     .into_iter()
     .collect();
 
-    // Test that we can deposit L2 funds from a rich L1 account
     let tester = Tester::setup().await?;
     let upgrade_tester = UpgradeTester::for_default_upgrade(&tester).await?;
 
