@@ -97,9 +97,11 @@ pub const BATCH_VERIFICATION_KEYS: [&str; 2] = [
     "0x7094f4b57ed88624583f68d2f241858f7dafb6d2558bc22d18991690d36b4e47",
     "0xf9306dd03807c08b646d47c739bd51e4d2a25b02bad0efb3d93f095982ac98cd",
 ];
-/// Shutdown completes in <5 seconds when there is no CPU starvation. PIG runs CPU-bound work on a
-/// blocking thread and may slow shutdown; 15s is ample even in that case.
-const NODE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+/// Shutdown completes in <5 seconds when there is no CPU starvation. But because prover input
+/// generator runs its CPU-bound task on a blocking thread it can significantly slow down graceful
+/// shutdown. We put 60s here until zksync-os v0.4.0 which will get rid of RISC-V simulator and
+/// allow async/abortable prover input generation.
+const NODE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 const PORT_ACQUISITION_TIMEOUT: Duration = Duration::from_secs(15);
 const PORT_ACQUISITION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Set of addresses (i.e. public keys) expected by batch verification. Derived from [`BATCH_VERIFICATION_KEYS`].
