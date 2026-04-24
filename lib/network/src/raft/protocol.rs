@@ -1,7 +1,10 @@
 use crate::raft::wire::{RaftRequest, RaftResponse, RaftWireMessage, RequestId};
 
-type PendingSender = oneshot::Sender<Result<RaftResponse, String>>;
-type PendingEntry = (u64, PendingSender);
+#[derive(Debug)]
+struct PendingRequest {
+    connection_id: u64,
+    response_tx: oneshot::Sender<Result<RaftResponse, String>>,
+}
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -39,7 +42,7 @@ pub struct RaftRouter {
     next_connection_id: Arc<AtomicU64>,
     // Stores (connection_id, response_sender) so that when a connection drops we can cancel
     // all requests that were routed through it.
-    pending: Arc<DashMap<RequestId, PendingEntry>>,
+    pending: Arc<DashMap<RequestId, PendingRequest>>,
     // Vec<PeerChannel> rather than a single PeerChannel because devp2p can establish two
     // simultaneous TCP connections for the same peer when both nodes dial each other at the same
     // time (each node sees an incoming connection from the other while its own outgoing connection
@@ -125,7 +128,7 @@ impl RaftRouter {
         for ch in &senders {
             match ch.sender.send(msg) {
                 Ok(()) => {
-                    self.pending.insert(id, (ch.connection_id, tx));
+                    self.pending.insert(id, PendingRequest { connection_id: ch.connection_id, response_tx: tx });
                     return Ok(rx);
                 }
                 Err(tokio::sync::mpsc::error::SendError(returned)) => {
@@ -178,8 +181,8 @@ impl RaftRouter {
     }
 
     pub fn complete_response(&self, id: RequestId, resp: Result<RaftResponse, String>) {
-        if let Some((_, (_, sender))) = self.pending.remove(&id) {
-            let _ = sender.send(resp);
+        if let Some((_, entry)) = self.pending.remove(&id) {
+            let _ = entry.response_tx.send(resp);
         }
     }
 
@@ -187,12 +190,12 @@ impl RaftRouter {
         let matching: Vec<RequestId> = self
             .pending
             .iter()
-            .filter(|e| e.value().0 == connection_id)
+            .filter(|e| e.value().connection_id == connection_id)
             .map(|e| *e.key())
             .collect();
         for id in matching {
-            if let Some((_, (_, sender))) = self.pending.remove(&id) {
-                let _ = sender.send(Err(format!("connection {connection_id} dropped")));
+            if let Some((_, entry)) = self.pending.remove(&id) {
+                let _ = entry.response_tx.send(Err(format!("connection {connection_id} dropped")));
             }
         }
     }
