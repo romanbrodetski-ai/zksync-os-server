@@ -247,9 +247,6 @@ impl NetworkService {
                     // Keep backoff durations short so that consensus nodes reconnect quickly
                     // after a peer restart or a transient network glitch. Long backoffs would
                     // stall raft leader election and block transaction processing.
-                    // low/medium/high/max correspond to increasing severities of connection
-                    // failure (e.g. transient disconnect vs. protocol-level breach); reth
-                    // selects the appropriate level based on the disconnect reason.
                     .with_backoff_durations(PeerBackoffDurations {
                         low: Duration::from_secs(1),
                         medium: Duration::from_secs(2),
