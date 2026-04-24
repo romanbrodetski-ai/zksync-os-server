@@ -195,7 +195,7 @@ num_cpus = "1.17.0"
 rocksdb = "0.24.0"
 thread_local = "1.1.9"
 pin-project = "1.1.10"
-openraft = { version = "0.9.21", features = ["serde", "generic-snapshot-data", "storage-v2"] }
+openraft = { version = "0.9.24", features = ["serde", "generic-snapshot-data", "storage-v2"] }
 assert_matches = "1.5"
 serde_yaml = "0.9"
 secrecy = "0.10.3"

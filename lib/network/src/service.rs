@@ -244,11 +244,13 @@ impl NetworkService {
                 PeersConfig::default()
                     // Sets peer ban duration to 1 second, effectively disabling it
                     .with_ban_duration(Duration::from_secs(1))
-                    // Tune backoff durations to be low, useful while we are in exploratory phase
-                    // and infra issues are expected.
                     // Keep backoff durations short so that consensus nodes reconnect quickly
                     // after a peer restart or a transient network glitch. Long backoffs would
                     // stall raft leader election and block transaction processing.
+                    // Note: these durations apply to all sub-protocols, not just raft.
+                    // low/medium/high/max correspond to increasing severities of connection
+                    // failure (e.g. transient disconnect vs. protocol-level breach); reth
+                    // selects the appropriate level based on the disconnect reason.
                     .with_backoff_durations(PeerBackoffDurations {
                         low: Duration::from_secs(1),
                         medium: Duration::from_secs(2),

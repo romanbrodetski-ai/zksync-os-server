@@ -14602,7 +14602,6 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "backon",
- "bincode 2.0.1",
  "dashmap",
  "futures",
  "metrics",
