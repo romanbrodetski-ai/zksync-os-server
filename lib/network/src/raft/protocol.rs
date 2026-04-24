@@ -1,10 +1,4 @@
 use crate::raft::wire::{RaftRequest, RaftResponse, RaftWireMessage, RequestId};
-
-#[derive(Debug)]
-struct PendingRequest {
-    connection_id: u64,
-    response_tx: oneshot::Sender<Result<RaftResponse, String>>,
-}
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -30,6 +24,12 @@ const RAFT_PROTOCOL_VERSION: usize = 1;
 // Raft has two wire message kinds (request/response), so it needs 2 slots.
 const RAFT_PROTOCOL_MESSAGE_COUNT: u8 = 2;
 const RAFT_OUTBOUND_CHANNEL_CAPACITY: usize = 64;
+
+#[derive(Debug)]
+struct PendingRequest {
+    connection_id: u64,
+    response_tx: oneshot::Sender<Result<RaftResponse, String>>,
+}
 
 #[async_trait]
 pub trait RaftRequestHandler: Send + Sync + 'static {
