@@ -78,13 +78,10 @@ impl RaftRouter {
         sender: mpsc::UnboundedSender<RaftWireMessage>,
     ) -> u64 {
         let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
-        self.peers
-            .entry(peer_id)
-            .or_default()
-            .push(PeerChannel {
-                connection_id,
-                sender,
-            });
+        self.peers.entry(peer_id).or_default().push(PeerChannel {
+            connection_id,
+            sender,
+        });
         tracing::info!(%peer_id, connection_id, "raft peer connection registered");
         connection_id
     }
@@ -128,7 +125,13 @@ impl RaftRouter {
         for ch in &senders {
             match ch.sender.send(msg) {
                 Ok(()) => {
-                    self.pending.insert(id, PendingRequest { connection_id: ch.connection_id, response_tx: tx });
+                    self.pending.insert(
+                        id,
+                        PendingRequest {
+                            connection_id: ch.connection_id,
+                            response_tx: tx,
+                        },
+                    );
                     return Ok(rx);
                 }
                 Err(tokio::sync::mpsc::error::SendError(returned)) => {
@@ -195,7 +198,9 @@ impl RaftRouter {
             .collect();
         for id in matching {
             if let Some((_, entry)) = self.pending.remove(&id) {
-                let _ = entry.response_tx.send(Err(format!("connection {connection_id} dropped")));
+                let _ = entry
+                    .response_tx
+                    .send(Err(format!("connection {connection_id} dropped")));
             }
         }
     }
@@ -312,7 +317,9 @@ impl ConnectionHandler for RaftConnectionHandler {
         peer_id: PeerId,
         conn: ProtocolConnection,
     ) -> Self::Connection {
-        tracing::info!("raft sub-protocol connection established (direction={direction:?}, peer_id={peer_id})");
+        tracing::info!(
+            "raft sub-protocol connection established (direction={direction:?}, peer_id={peer_id})"
+        );
         self.handler.establish_connection(peer_id, conn)
     }
 }
@@ -347,7 +354,8 @@ impl Drop for RaftConnection {
             self.router.pending.len(),
         );
         self.task.abort();
-        self.router.cancel_pending_for_connection(self.connection_id);
+        self.router
+            .cancel_pending_for_connection(self.connection_id);
         self.router
             .unregister_peer(&self.peer_id, self.connection_id);
     }
