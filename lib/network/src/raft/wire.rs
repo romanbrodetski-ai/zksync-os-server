@@ -38,6 +38,8 @@ pub enum RaftWireMessage {
 }
 
 impl RaftWireMessage {
+    // TEMPORARY: using JSON rather than RLP because openraft types derive serde but not RLP;
+    // switching to RLP would require manual codec impls for every openraft struct.
     pub fn encode(&self) -> Vec<u8> {
         #[derive(Serialize)]
         struct RequestPayload<'a> {
