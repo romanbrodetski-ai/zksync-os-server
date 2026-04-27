@@ -220,7 +220,7 @@ impl HttpRpcReport {
             let outage = HttpRpcOutage::new(start, end);
             if longest
                 .as_ref()
-                .map_or(true, |known| outage.duration > known.duration)
+                .is_none_or(|known| outage.duration > known.duration)
             {
                 longest = Some(outage);
             }
