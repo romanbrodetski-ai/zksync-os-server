@@ -218,7 +218,10 @@ impl HttpRpcReport {
 
         let mut try_update = |start, end| {
             let outage = HttpRpcOutage::new(start, end);
-            if longest.as_ref().map_or(true, |known| outage.duration > known.duration) {
+            if longest
+                .as_ref()
+                .map_or(true, |known| outage.duration > known.duration)
+            {
                 longest = Some(outage);
             }
         };
@@ -798,9 +801,8 @@ fn as_invalid<T>(result: anyhow::Result<T>) -> Result<T, HttpRpcSampleStatus> {
 }
 
 fn decode_rpc_batch_response(body: &str) -> Result<(String, u64, String), HttpRpcSampleStatus> {
-    let responses: Vec<Value> = as_invalid(
-        serde_json::from_str(body).context("failed to decode JSON-RPC batch response"),
-    )?;
+    let responses: Vec<Value> =
+        as_invalid(serde_json::from_str(body).context("failed to decode JSON-RPC batch response"))?;
     if responses.len() != 3 {
         return Err(HttpRpcSampleStatus::InvalidResponse {
             message: format!("expected 3 JSON-RPC responses, got {}", responses.len()),
