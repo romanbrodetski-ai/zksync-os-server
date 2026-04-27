@@ -90,7 +90,8 @@ pub fn spawn_leadership_monitor(
                 current_term: metrics.current_term,
                 last_applied_index: metrics.last_applied.map(|id| id.index),
             };
-            if status_tx.send(status).is_err() || leader_tx.send(role).is_err() {
+            let _ = status_tx.send(status);
+            if leader_tx.send(role).is_err() {
                 break;
             }
         }
