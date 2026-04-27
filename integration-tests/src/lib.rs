@@ -4,6 +4,7 @@ use crate::network::Zksync;
 use crate::node_log::NodeLogState;
 use crate::prover_tester::ProverTester;
 use crate::provider::{ZksyncApi, ZksyncTestingProvider};
+use crate::rpc_recorder::{HttpRpcRecorder, RpcRecordConfig};
 use crate::test_config::{build_node_config, disable_prover_input_generation};
 use crate::utils::LockedPort;
 use alloy::network::EthereumWallet;
@@ -36,6 +37,7 @@ use zksync_os_server::default_protocol_version::{
     NEXT_PROTOCOL_VERSION, PROTOCOL_VERSION, PROTOCOL_VERSION_V31_0,
 };
 use zksync_os_state_full_diffs::FullDiffsState;
+use zksync_os_status_server::StatusResponse;
 use zksync_os_types::{
     L1PriorityTxType, L1TxType, NodeRole, REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE,
 };
@@ -44,10 +46,12 @@ pub mod assert_traits;
 pub mod config;
 pub mod contracts;
 pub mod dyn_wallet_provider;
+pub mod multi_node;
 mod network;
 mod node_log;
 mod prover_tester;
 pub mod provider;
+pub mod rpc_recorder;
 pub mod test_config;
 pub mod upgrade;
 mod utils;
@@ -391,10 +395,21 @@ impl Tester {
         &self.l2_rpc_address
     }
 
+    pub fn record_l2_http_rpc(&self, config: RpcRecordConfig) -> HttpRpcRecorder {
+        HttpRpcRecorder::start_http("l2", self.l2_rpc_url(), config)
+    }
+
     pub fn external_node_config(&self) -> Config {
         let mut config = self.config.clone();
         self.apply_external_node_defaults(&mut config);
         config
+    }
+
+    pub async fn status(&self) -> anyhow::Result<StatusResponse> {
+        let response = reqwest::get(format!("{}/status", self.status_server_url))
+            .await?
+            .error_for_status()?;
+        Ok(response.json::<StatusResponse>().await?)
     }
 
     pub async fn wait_for_initial_deposit(&self) -> anyhow::Result<()> {
@@ -458,6 +473,9 @@ impl Tester {
             owned_supporting_nodes,
             ..
         } = self;
+        // NOTE: supporting nodes (e.g. gateway) are kept alive across stop/start so that
+        // `restart()` works for `NEXT_TO_GATEWAY` topology.  They are only torn down in
+        // `StoppedTester::shutdown()` or when `StoppedTester` is dropped.
         shutdown_runtime(runtime).await?;
         Ok(StoppedTester {
             l1,
@@ -511,6 +529,60 @@ impl Tester {
         let ports = Ports::acquire_unused().await?;
         Self::bind_runtime_config(&l1, tempdir.as_ref(), &mut config, &ports);
         Self::launch_node_inner(l1, config, tempdir, chain_layout, None, true, Some(ports)).await
+    }
+
+    pub(crate) async fn launch_node_with_network_port(
+        l1: AnvilL1,
+        enable_prover: bool,
+        config_overrides: Option<impl FnOnce(&mut Config)>,
+        chain_layout: ChainLayout<'static>,
+        network: LockedPort,
+        wait_for_initial_deposit: bool,
+    ) -> anyhow::Result<Self> {
+        Self::launch_node_with_ports(
+            l1,
+            enable_prover,
+            prover_input_generation_enabled(),
+            config_overrides,
+            chain_layout,
+            wait_for_initial_deposit,
+            Ports::acquire_unused_with_network(network).await?,
+        )
+        .await
+    }
+
+    async fn launch_node_with_ports(
+        l1: AnvilL1,
+        enable_prover: bool,
+        enable_prover_input_generation: bool,
+        config_overrides: Option<impl FnOnce(&mut Config)>,
+        chain_layout: ChainLayout<'static>,
+        wait_for_initial_deposit: bool,
+        ports: Ports,
+    ) -> anyhow::Result<Self> {
+        let tempdir = Arc::new(tempfile::tempdir()?);
+        let mut config = build_node_config(&l1, chain_layout).await?;
+        if enable_prover {
+            config.prover_api_config.fake_fri_provers.enabled = false;
+            config.prover_api_config.fake_snark_provers.enabled = false;
+        }
+        if !enable_prover_input_generation {
+            disable_prover_input_generation(&mut config);
+        }
+        Self::bind_runtime_config(&l1, tempdir.as_ref(), &mut config, &ports);
+        if let Some(config_overrides) = config_overrides {
+            config_overrides(&mut config);
+        }
+        Self::launch_node_inner(
+            l1,
+            config,
+            tempdir,
+            chain_layout,
+            None,
+            wait_for_initial_deposit,
+            Some(ports),
+        )
+        .await
     }
 
     fn bind_runtime_config(l1: &AnvilL1, tempdir: &TempDir, config: &mut Config, ports: &Ports) {
@@ -819,6 +891,15 @@ impl Ports {
             l2_rpc: LockedPort::acquire_unused().await?,
             prover_api: LockedPort::acquire_unused().await?,
             network: LockedPort::acquire_unused().await?,
+            status: LockedPort::acquire_unused().await?,
+        })
+    }
+
+    async fn acquire_unused_with_network(network: LockedPort) -> anyhow::Result<Self> {
+        Ok(Self {
+            l2_rpc: LockedPort::acquire_unused().await?,
+            prover_api: LockedPort::acquire_unused().await?,
+            network,
             status: LockedPort::acquire_unused().await?,
         })
     }
@@ -1198,9 +1279,6 @@ impl AnvilL1 {
             anvil
                 .port(locked_port.port)
                 .chain_id(L1_CHAIN_ID)
-                .arg("--block-time")
-                .arg("0.25")
-                .arg("--mixed-mining")
                 .arg("--load-state")
                 .arg(l1_state_path)
         })?;

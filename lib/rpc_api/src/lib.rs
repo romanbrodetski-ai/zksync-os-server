@@ -4,7 +4,6 @@ pub mod filter;
 pub mod net;
 pub mod ots;
 pub mod pubsub;
-pub mod txpool;
 pub mod types;
 pub mod unstable;
 pub mod web3;

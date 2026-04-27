@@ -93,7 +93,8 @@ use zksync_os_observability::GENERAL_METRICS;
 use zksync_os_pipeline::Pipeline;
 use zksync_os_priority_tree::PriorityTreeManager;
 use zksync_os_raft::{
-    BlockCanonizationEngine, ConsensusRuntimeParts, LeadershipSignal, loopback_consensus,
+    BlockCanonizationEngine, ConsensusRuntimeParts, LeadershipSignal, init_consensus,
+    loopback_consensus,
 };
 use zksync_os_reth_compat::provider::ZkProviderFactory;
 use zksync_os_revm_consistency_checker::node::RevmConsistencyChecker;
@@ -117,6 +118,7 @@ use zksync_os_types::{
 };
 
 const BLOCK_REPLAY_WAL_DB_NAME: &str = "block_replay_wal";
+const RAFT_DB_NAME: &str = "raft";
 const STATE_TREE_DB_NAME: &str = "tree";
 const PRIORITY_TREE_DB_NAME: &str = "priority_txs_tree";
 const REPOSITORY_DB_NAME: &str = "repository";
@@ -417,8 +419,48 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let ConsensusRuntimeParts {
         canonization_engine,
         leadership,
-        ..
-    } = loopback_consensus();
+        raft,
+        raft_handle,
+    } = if config.consensus_config.enabled {
+        init_consensus(
+            config
+                .consensus_config
+                .clone()
+                .into_raft_consensus_config(
+                    &config.network_config,
+                    config.general_config.rocks_db_path.join(RAFT_DB_NAME),
+                )
+                .expect("failed to build raft consensus config"),
+            Box::new(block_replay_storage.clone()),
+        )
+        .await
+        .expect("failed to initialize consensus engine")
+    } else {
+        tracing::info!("openraft consensus is disabled - assuming perpetual leader role");
+        loopback_consensus()
+    };
+    let (raft_protocol_handler, raft_bootstrapper, raft_status_rx) = match raft {
+        Some(raft) => (
+            Some(raft.protocol_handler),
+            raft.bootstrapper,
+            Some(raft.status_rx),
+        ),
+        None => (None, None, None),
+    };
+    if let Some(raft) = raft_handle {
+        // OpenRaft spawns its core task with plain tokio::spawn, outside of reth_tasks.
+        // Register an explicit shutdown task so that graceful_shutdown_with_timeout waits
+        // for the RaftCore to finish — releasing its RocksDB handles — before returning.
+        runtime.spawn_critical_with_graceful_shutdown_signal(
+            "raft-shutdown",
+            |shutdown| async move {
+                let _ = shutdown.await;
+                if let Err(e) = raft.shutdown().await {
+                    tracing::warn!(%e, "raft shutdown error");
+                }
+            },
+        );
+    }
     if config.network_config.enabled {
         tracing::info!("initializing p2p networking");
         let batch_verification_policy_config: BatchVerificationPolicyConfig =
@@ -434,7 +476,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
                 }),
                 block_replay_storage.clone(),
                 zk_provider_factory,
-                None,
+                raft_protocol_handler,
             )
             .await
         } else {
@@ -463,12 +505,18 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
                 }),
                 block_replay_storage.clone(),
                 zk_provider_factory,
-                None,
+                raft_protocol_handler,
             )
             .await
         }
         .expect("failed to create network service");
         network_service.spawn(runtime, node_role.is_main().then_some(verify_request_rx));
+        if let Some(bootstrapper) = raft_bootstrapper {
+            bootstrapper
+                .bootstrap_if_needed()
+                .await
+                .expect("failed to run raft bootstrap process");
+        }
     } else if node_role.is_main() {
         tracing::info!(
             "p2p networking is disabled; to enable set `network.enabled=true` and populate `network.secret_key`"
@@ -920,9 +968,14 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             .address
             .parse()
             .expect("malformed `status_server.address`");
-        runtime.spawn_critical_with_graceful_shutdown_signal("status server", |shutdown| {
-            run_status_server(addr, shutdown)
-        });
+        runtime.spawn_critical_with_graceful_shutdown_signal(
+            "status server",
+            |shutdown| async move {
+                run_status_server(addr, shutdown, raft_status_rx)
+                    .await
+                    .expect("failed to run status server");
+            },
+        );
     }
 
     // =========== Start JSON RPC ========
@@ -1051,6 +1104,10 @@ async fn run_main_node_pipeline(
             "Batcher subsystem disabled — skipping prover input generation, L1 settlement, and downstream components"
         );
         pipeline.pipe(NoOpSink::new()).spawn();
+        runtime.spawn_critical_task(
+            "clear failing block config",
+            clear_failing_block_config_task(finality, internal_config_manager),
+        );
         return;
     }
 
@@ -1153,7 +1210,6 @@ async fn run_main_node_pipeline(
             to_address: node_state_on_startup.l1_state.validator_timelock_sl,
             gateway: config.general_config.gateway_rpc_url.is_some(),
             commit_submitted_tx: Some(commit_submitted_tx),
-            sl_block_number: node_state_on_startup.l1_state.sl_block_number,
         })
         .pipe(snark_proving_step)
         .pipe(GaplessL1ProofSender::new(
@@ -1165,7 +1221,6 @@ async fn run_main_node_pipeline(
             to_address: node_state_on_startup.l1_state.validator_timelock_sl,
             gateway: config.general_config.gateway_rpc_url.is_some(),
             commit_submitted_tx: None,
-            sl_block_number: node_state_on_startup.l1_state.sl_block_number,
         })
         .pipe(
             PriorityTreePipelineStep::new(
@@ -1182,7 +1237,6 @@ async fn run_main_node_pipeline(
             to_address: node_state_on_startup.l1_state.validator_timelock_sl,
             gateway: config.general_config.gateway_rpc_url.is_some(),
             commit_submitted_tx: None,
-            sl_block_number: node_state_on_startup.l1_state.sl_block_number,
         })
         .pipe(BatchSink::new(internal_config_manager));
 
@@ -1346,7 +1400,6 @@ fn check_batch_verification_mismatch(
     if !server_config.server_enabled {
         return false;
     }
-
     let l1_threshold = match l1_config {
         BatchVerificationSL::Enabled(config) => config.threshold,
         BatchVerificationSL::Disabled => return false,
