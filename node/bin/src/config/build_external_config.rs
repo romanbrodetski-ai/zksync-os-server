@@ -1,5 +1,5 @@
 use crate::config::{
-    BaseTokenPriceUpdaterConfig, BatchVerificationConfig, BatcherConfig, Config,
+    BaseTokenPriceUpdaterConfig, BatchVerificationConfig, BatcherConfig, Config, ConsensusConfig,
     ExternalPriceApiClientConfig, FeeConfig, GasAdjusterConfig, GeneralConfig, GenesisConfig,
     InteropFeeUpdaterConfig, L1SenderConfig, L1WatcherConfig, MempoolConfig,
     MempoolTxValidatorConfig, NetworkConfig, ObservabilityConfig, ProverApiConfig,
@@ -24,6 +24,12 @@ pub async fn build_external_config(repo: ConfigRepository<'_>) -> Config {
         .expect("Failed to load network config")
         .parse()
         .expect("Failed to parse network config");
+
+    let consensus_config = repo
+        .single::<ConsensusConfig>()
+        .expect("Failed to load consensus config")
+        .parse()
+        .expect("Failed to parse consensus config");
 
     let genesis_config = repo
         .single::<GenesisConfig>()
@@ -140,6 +146,7 @@ pub async fn build_external_config(repo: ConfigRepository<'_>) -> Config {
     Config {
         general_config,
         network_config,
+        consensus_config,
         genesis_config,
         rpc_config,
         mempool_config,
