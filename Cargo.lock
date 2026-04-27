@@ -14251,7 +14251,7 @@ dependencies = [
 
 [[package]]
 name = "zksync_os_consensus_types"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "openraft",
  "reth-network-peers",
