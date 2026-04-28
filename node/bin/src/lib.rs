@@ -434,6 +434,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
                 }),
                 block_replay_storage.clone(),
                 zk_provider_factory,
+                None,
             )
             .await
         } else {
@@ -462,6 +463,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
                 }),
                 block_replay_storage.clone(),
                 zk_provider_factory,
+                None,
             )
             .await
         }
