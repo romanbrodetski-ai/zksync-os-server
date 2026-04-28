@@ -29,12 +29,6 @@ pub async fn init_consensus(
     config: RaftConsensusConfig,
     block_replay_storage: Box<dyn ReadReplay>,
 ) -> anyhow::Result<ConsensusRuntimeParts> {
-    anyhow::ensure!(
-        config.peer_ids.contains(&config.node_id),
-        "consensus.peer_ids does not include local peer id derived from network.secret_key: {}",
-        config.node_id
-    );
-
     let router = RaftRouter::default();
     let node_id = config.node_id;
     let raft_config = Config {
