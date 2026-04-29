@@ -124,6 +124,26 @@ pub(crate) fn io_err_msg(
     }
 }
 
+/// Snapshot of the raw Raft storage state captured before `Raft::new()` runs.
+///
+/// Fields are keyed on what each CF holds at rest, before OpenRaft's startup
+/// reapplication pass. Comparing these values against post-init metrics lets
+/// you see exactly which entries were reapplied during startup.
+#[derive(Debug)]
+pub struct RaftStorageStartupState {
+    /// Last `Vote` persisted to the Vote CF (the node this peer voted for and in which term).
+    pub vote: Option<Vote<PeerId>>,
+    /// Last committed `LogId` persisted to the LogMeta CF.
+    pub committed: Option<LogId<PeerId>>,
+    /// `LogId` of the last entry in the Logs CF (may be ahead of `committed` if a leader
+    /// wrote entries that were never committed before crashing).
+    pub last_log: Option<LogId<PeerId>>,
+    /// The `LogId` stored in `RaftApplied` for `wal_last_block`. This is what
+    /// `applied_state()` returns as `last_applied` on this startup — i.e. the WAL anchor.
+    /// Any committed entries with index > this value will be reapplied by `Raft::new()`.
+    pub raft_applied_for_wal_block: Option<LogId<PeerId>>,
+}
+
 impl RaftLogStore {
     /// Opens raft storage DB with sync writes enabled.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
@@ -136,6 +156,42 @@ impl RaftLogStore {
     /// Returns a clone of the underlying raft RocksDB handle.
     pub(crate) fn db(&self) -> RocksDB<RaftColumnFamily> {
         self.db.clone()
+    }
+
+    /// Reads the raw storage state that `Raft::new()` will use to initialise itself.
+    ///
+    /// Call this **before** `Raft::new()` so you capture what was on disk from the
+    /// previous run, not the post-reapplication result.
+    #[allow(clippy::result_large_err)]
+    pub fn startup_state(
+        &self,
+        wal_last_block: u64,
+    ) -> Result<RaftStorageStartupState, StorageError<PeerId>> {
+        let vote = db_get(
+            &self.db,
+            RaftColumnFamily::Vote,
+            Self::VOTE_KEY,
+            &ErrorSubject::Store,
+        )?;
+        let committed = db_get(
+            &self.db,
+            RaftColumnFamily::LogMeta,
+            Self::COMMITTED_KEY,
+            &ErrorSubject::Store,
+        )?;
+        let last_log = self.last_log_id_from_db()?;
+        let raft_applied_for_wal_block = db_get(
+            &self.db,
+            RaftColumnFamily::RaftApplied,
+            &wal_last_block.to_be_bytes(),
+            &ErrorSubject::StateMachine,
+        )?;
+        Ok(RaftStorageStartupState {
+            vote,
+            committed,
+            last_log,
+            raft_applied_for_wal_block,
+        })
     }
 }
 

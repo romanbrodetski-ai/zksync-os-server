@@ -128,6 +128,41 @@ async fn consensus_cluster_includes_simple_transaction_with_wait() -> anyhow::Re
 }
 
 #[test_log::test(tokio::test)]
+async fn consensus_can_restart_disabled_after_clearing_raft_history() -> anyhow::Result<()> {
+    let mut cluster = MultiNodeTester::builder()
+        .with_consensus_secret_keys(consensus_test_keys(1))
+        .build()
+        .await?;
+    let result = async {
+        let leader_index = cluster
+            .wait_for_raft_cluster_formation(CLUSTER_FORMATION_TIMEOUT)
+            .await?;
+
+        send_transfer(&cluster, leader_index).await?;
+        send_transfer(&cluster, leader_index).await?;
+
+        cluster.suspend_node(leader_index).await?;
+
+        cluster
+            .start_node_with_overrides(leader_index, |config| {
+                config.consensus_config.enabled = false;
+                config.consensus_config.force_clear_raft_history = true;
+            })
+            .await?;
+
+        send_transfer(&cluster, leader_index).await?;
+
+        // TODO: investigate the follow-up transition where consensus is enabled again after
+        // running with consensus disabled and cleared raft history.
+
+        Ok(())
+    }
+    .await;
+    let shutdown_result = cluster.shutdown_all().await;
+    result.and(shutdown_result)
+}
+
+#[test_log::test(tokio::test)]
 async fn consensus_cluster_forms_with_three_nodes_and_replicates_blocks() -> anyhow::Result<()> {
     let cluster = MultiNodeTester::builder()
         .with_consensus_secret_keys(consensus_test_keys(3))
