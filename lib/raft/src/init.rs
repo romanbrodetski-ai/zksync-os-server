@@ -7,7 +7,7 @@ use crate::model::{
 use crate::network::{RaftNetworkFactory, RaftRpcHandler};
 use crate::state_machine::RaftStateMachineStore;
 use crate::status::RaftConsensusStatus;
-use crate::storage::RaftLogStore;
+use crate::storage::{RaftLogStore, RaftStorageStartupState};
 use anyhow::Context;
 use openraft::{Config, Raft, SnapshotPolicy};
 use reth_network_peers::PeerId;
@@ -43,6 +43,14 @@ pub async fn init_consensus(
     let raft_config = raft_config.validate().context("invalid raft config")?;
 
     let log_store = RaftLogStore::open(&config.storage_path)?;
+
+    // Capture raw storage state BEFORE Raft::new() runs its reapply_committed() pass.
+    // This lets us compare pre-init vs post-init to see whether any entries were replayed.
+    let wal_last_block = block_replay_storage.latest_record();
+    let storage_state: RaftStorageStartupState = log_store
+        .startup_state(wal_last_block)
+        .context("failed to read raft storage startup state")?;
+
     let (canonized_sender, canonized_rx) = mpsc::unbounded_channel();
     let state_machine =
         RaftStateMachineStore::new(log_store.db(), block_replay_storage, canonized_sender);
@@ -61,12 +69,28 @@ pub async fn init_consensus(
     )
     .await?;
 
+    // Note: if wal_last_block was behind the committed index, Raft::new() may
+    // have reapplied those logs by sending them to canonized_sender.
     let initial_metrics = raft.metrics().borrow().clone();
+    let peers = config.peer_ids.len();
+    let bootstrap = config.bootstrap;
+    let raft_applied_for_wal_block = &storage_state.raft_applied_for_wal_block;
+    let stored_vote = &storage_state.vote;
+    let stored_committed = &storage_state.committed;
+    let stored_last_log = &storage_state.last_log;
+    let state = &initial_metrics.state;
+    let current_term = initial_metrics.current_term;
+    let vote = &initial_metrics.vote;
+    let last_log_index = initial_metrics.last_log_index;
+    let last_applied = &initial_metrics.last_applied;
+    let purged = &initial_metrics.purged;
     tracing::info!(
-        "openraft consensus initialized (node_id={node_id}, peers={}, bootstrap={}, last_applied={:?})",
-        config.peer_ids.len(),
-        config.bootstrap,
-        initial_metrics.last_applied,
+        "openraft consensus initialized: node_id={node_id}, peers={peers}, bootstrap={bootstrap}, \
+         wal_last_block={wal_last_block}, raft_applied_for_wal_block={raft_applied_for_wal_block:?}, \
+         stored_vote={stored_vote:?}, stored_committed={stored_committed:?}, \
+         stored_last_log={stored_last_log:?}, state={state:?}, current_term={current_term}, \
+         vote={vote:?}, last_log_index={last_log_index:?}, last_applied={last_applied:?}, \
+         purged={purged:?}",
     );
 
     let (leader_tx, leader_rx) = watch::channel(ConsensusRole::Replica);

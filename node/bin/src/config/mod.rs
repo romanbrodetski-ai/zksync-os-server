@@ -545,6 +545,13 @@ pub struct ConsensusConfig {
         "requires `network.secret_key`"
     ))]
     pub enabled: bool,
+    /// Delete persisted OpenRaft state before startup.
+    ///
+    /// This is intended for intentionally switching a node away from previously persisted
+    /// consensus history. Without clearing this state, starting with consensus disabled is
+    /// rejected because later re-enabling consensus could result in an invalid state.
+    #[config(default_t = false)]
+    pub force_clear_raft_history: bool,
     /// List of consensus participant peer IDs.
     /// Must include the own ID (derived from `NetworkConfig#secret_key`).
     #[config(default, with = Serde![*])]

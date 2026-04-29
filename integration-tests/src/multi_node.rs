@@ -375,6 +375,22 @@ impl MultiNodeTester {
         Ok(())
     }
 
+    pub async fn start_node_with_overrides(
+        &mut self,
+        index: usize,
+        config_overrides: impl FnOnce(&mut Config),
+    ) -> anyhow::Result<()> {
+        tracing::info!("starting suspended node {index} with config overrides...");
+        let suspended = self.nodes.remove(index);
+        let started = match suspended {
+            NodeSlot::Suspended(tester) => tester.start_with_overrides(config_overrides).await?,
+            NodeSlot::Running(_) => panic!("node {index} is not suspended"),
+        };
+        self.nodes
+            .insert(index, NodeSlot::Running(Box::new(started)));
+        Ok(())
+    }
+
     /// Waits for the Raft cluster to form with a single elected leader
     /// Returns the index of the leader node
     pub async fn wait_for_raft_cluster_formation(
