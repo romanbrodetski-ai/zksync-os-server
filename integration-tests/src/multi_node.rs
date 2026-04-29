@@ -9,8 +9,8 @@ use crate::{
 };
 
 const TEST_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(100);
-const TEST_ELECTION_TIMEOUT_MIN: Duration = Duration::from_millis(500);
-const TEST_ELECTION_TIMEOUT_MAX: Duration = Duration::from_millis(1_500);
+const TEST_ELECTION_TIMEOUT_MIN: Duration = Duration::from_secs(2);
+const TEST_ELECTION_TIMEOUT_MAX: Duration = Duration::from_secs(4);
 
 #[derive(Debug)]
 enum NodeSlot {
@@ -298,6 +298,7 @@ impl ClusterState {
 /// Test harness for multi-node consensus testing
 pub struct MultiNodeTester {
     nodes: Vec<NodeSlot>,
+    batcher_node_index: usize,
 }
 
 impl MultiNodeTester {
@@ -313,6 +314,10 @@ impl MultiNodeTester {
 
     pub fn is_node_suspended(&self, index: usize) -> bool {
         matches!(self.nodes[index], NodeSlot::Suspended(_))
+    }
+
+    pub fn batcher_node_index(&self) -> usize {
+        self.batcher_node_index
     }
 
     pub fn len(&self) -> usize {
@@ -492,6 +497,7 @@ impl MultiNodeTester {
 pub struct MultiNodeTesterBuilder {
     consensus_secret_keys: Vec<zksync_os_network::SecretKey>,
     consensus_nodes_to_spawn: Option<usize>,
+    batcher_node_index: Option<usize>,
 }
 
 impl MultiNodeTesterBuilder {
@@ -505,6 +511,13 @@ impl MultiNodeTesterBuilder {
         self
     }
 
+    /// Choose which launched consensus node runs the batcher. Exactly one node has
+    /// `batcher_config.enabled = true`; the rest keep it disabled.
+    pub fn with_batcher_node_index(mut self, index: usize) -> Self {
+        self.batcher_node_index = Some(index);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<MultiNodeTester> {
         let membership_nodes = self.consensus_secret_keys.len();
         assert!(
@@ -515,6 +528,11 @@ impl MultiNodeTesterBuilder {
         assert!(
             num_nodes > 0 && num_nodes <= membership_nodes,
             "spawn_consensus_nodes must be in 1..={membership_nodes}"
+        );
+        let batcher_node_index = self.batcher_node_index.unwrap_or(0);
+        assert!(
+            batcher_node_index < num_nodes,
+            "batcher_node_index must be in 0..{num_nodes}"
         );
 
         let mut locked_ports = Vec::with_capacity(membership_nodes);
@@ -559,12 +577,13 @@ impl MultiNodeTesterBuilder {
                     // Production configs set this on every consensus node. The first node to
                     // initialize the cluster wins; the rest safely observe that it is initialized.
                     let bootstrap = true;
+                    let batcher_enabled = i == batcher_node_index;
                     let expected_node_id = zksync_os_network::NodeRecord::from_secret_key(
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), network_port),
                         &secret,
                     )
                     .id;
-                    tracing::info!("starting node... (node_index={i}, node_id={expected_node_id}, network_port={network_port}, bootstrap={bootstrap})");
+                    tracing::info!("starting node... (node_index={i}, node_id={expected_node_id}, network_port={network_port}, bootstrap={bootstrap}, batcher_enabled={batcher_enabled})");
 
                     let node = Tester::launch_node_with_network_port(
                         l1,
@@ -572,8 +591,7 @@ impl MultiNodeTesterBuilder {
                         Some(move |config: &mut Config| {
                             config.general_config.node_role = NodeRole::MainNode;
                             config.general_config.main_node_rpc_url = None;
-                            config.batcher_config.enabled = false;
-                            config.batcher_config.enabled = false;
+                            config.batcher_config.enabled = batcher_enabled;
                             config.network_config.enabled = true;
                             config.network_config.secret_key = Some(secret);
                             config.network_config.address = Ipv4Addr::LOCALHOST;
@@ -582,8 +600,9 @@ impl MultiNodeTesterBuilder {
                             config.consensus_config.enabled = true;
                             config.consensus_config.bootstrap = bootstrap;
                             config.consensus_config.peer_ids = peers.clone();
-                            // Keep elections fast, but leave enough jitter to avoid repeated
-                            // split votes after a leader disappears in a 3-node cluster.
+                            // Keep elections reasonably fast while leaving enough room for
+                            // batcher-enabled nodes to finish in-flight block work before a
+                            // transient election can displace the current leader.
                             config.consensus_config.election_timeout_min =
                                 TEST_ELECTION_TIMEOUT_MIN;
                             config.consensus_config.election_timeout_max =
@@ -604,6 +623,7 @@ impl MultiNodeTesterBuilder {
 
         Ok(MultiNodeTester {
             nodes: try_join_all(launches).await?,
+            batcher_node_index,
         })
     }
 }

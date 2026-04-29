@@ -2,13 +2,16 @@ use alloy::network::TransactionBuilder;
 use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::TransactionRequest;
+use anyhow::Context as _;
 use std::time::Duration;
 use tokio::time::{Instant, sleep};
 use zksync_os_integration_tests::assert_traits::ReceiptAssert;
 use zksync_os_integration_tests::multi_node::MultiNodeTester;
+use zksync_os_integration_tests::provider::ZksyncTestingProvider;
 
 const CLUSTER_FORMATION_TIMEOUT: Duration = Duration::from_secs(20);
 const REPLICATION_TIMEOUT: Duration = Duration::from_secs(20);
+const L1_FINALIZATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn consensus_test_keys(n: usize) -> Vec<zksync_os_network::SecretKey> {
     (0..n)
@@ -101,10 +104,42 @@ async fn send_transfer_and_wait_for_active_replication(
     leader_index: usize,
 ) -> anyhow::Result<u64> {
     let initial_applied = active_max_last_applied_index(cluster).await?;
-    send_transfer(cluster, leader_index).await?;
-    cluster
+    let receipt = send_transfer(cluster, leader_index).await?;
+    let replicated_applied = cluster
         .wait_for_active_last_applied_index_convergence(initial_applied + 1, REPLICATION_TIMEOUT)
+        .await?;
+    let block_number = receipt
+        .block_number
+        .context("transfer receipt did not include a block number")?;
+    wait_for_l1_finalization_if_batcher_active(cluster, block_number).await?;
+    Ok(replicated_applied)
+}
+
+async fn wait_for_l1_finalization_if_batcher_active(
+    cluster: &MultiNodeTester,
+    block_number: u64,
+) -> anyhow::Result<u64> {
+    let batcher_idx = cluster.batcher_node_index();
+    if cluster.is_node_suspended(batcher_idx) {
+        tracing::info!(
+            block_number,
+            batcher_idx,
+            "skipping L1 finalization check because the batcher node is suspended"
+        );
+        return Ok(block_number);
+    }
+
+    cluster
+        .node(batcher_idx)
+        .l2_zk_provider
+        .wait_finalized_with_timeout(block_number, L1_FINALIZATION_TIMEOUT)
         .await
+        .with_context(|| {
+            format!(
+                "block {block_number} was not finalized while batcher node {batcher_idx} was active"
+            )
+        })?;
+    Ok(block_number)
 }
 
 #[test_log::test(tokio::test)]
@@ -118,7 +153,11 @@ async fn consensus_cluster_includes_simple_transaction_with_wait() -> anyhow::Re
             .wait_for_raft_cluster_formation(CLUSTER_FORMATION_TIMEOUT)
             .await?;
 
-        send_transfer(&cluster, leader_index).await?;
+        let receipt = send_transfer(&cluster, leader_index).await?;
+        let block_number = receipt
+            .block_number
+            .context("transfer receipt did not include a block number")?;
+        wait_for_l1_finalization_if_batcher_active(&cluster, block_number).await?;
 
         Ok(())
     }
@@ -435,11 +474,9 @@ async fn consensus_follower_restarts_and_catches_up() -> anyhow::Result<()> {
             .wait_for_active_raft_cluster_formation(CLUSTER_FORMATION_TIMEOUT)
             .await?;
 
-        send_transfer(&cluster, active_leader_idx).await?;
-        send_transfer(&cluster, active_leader_idx).await?;
-        let target_applied = cluster
-            .wait_for_active_last_applied_index_convergence(1, REPLICATION_TIMEOUT)
-            .await?;
+        send_transfer_and_wait_for_active_replication(&cluster, active_leader_idx).await?;
+        let target_applied =
+            send_transfer_and_wait_for_active_replication(&cluster, active_leader_idx).await?;
 
         cluster.start_node(follower_idx).await?;
         wait_for_node_last_applied_index_at_or_above(

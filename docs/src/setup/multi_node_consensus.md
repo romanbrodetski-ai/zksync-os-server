@@ -7,7 +7,18 @@ This document describes the two node roles in a multi-node setup:
 
 A ConsensusNode will propose blocks when it is leader and will follow canonized blocks when it is a replica. An ExternalNode only replays canonized blocks and never proposes.
 
-> **Batcher subsystem (L1 settlement) is not yet highly available.** The batcher pipeline — proof generation, L1 batch submission — must be enabled on exactly one node via `batcher_enabled=true` (which is the default). The other consensus nodes should set `batcher_enabled=false`. Leader failover works for block production: if the node running the batcher fails, another node will be elected leader and continue producing blocks. However, those blocks will not be submitted to L1 until the original batcher node restarts or the cluster is manually reconfigured to enable the batcher on a different node.
+> **Batcher subsystem (L1 settlement) is not yet highly available.** The batcher pipeline — proof generation, L1 batch submission — must be enabled on exactly one consensus node via `batcher_enabled=true` (which is the default). The other consensus nodes should set `batcher_enabled=false`. This choice is independent of `consensus_bootstrap` and the current Raft leader: the batcher-enabled node may be a leader or a follower. Leader failover works for block production. If the node running the batcher fails, another node will be elected leader and continue producing blocks, but those blocks will not be submitted to L1 until the original batcher node restarts or the cluster is manually reconfigured to enable the batcher on a different node.
+
+### Prerequisites
+
+Before starting any node, an L1 must be running at `general_l1_rpc_url` (defaults to `http://localhost:8545`) with the chain's contract state preloaded. The `run_local.sh` script does this automatically; to do it manually for the v30.2 default chain:
+
+```bash
+gzip -d < ./local-chains/v30.2/l1-state.json.gz > /tmp/l1-state.json
+anvil --load-state /tmp/l1-state.json --port 8545 --block-time 0.25 --mixed-mining
+```
+
+The default ports used by ConsensusNode #1 below (`3050` RPC, `3060` p2p, `3071` status server, `3124` prover API, `3312` Prometheus) must be free on the host. In this example ConsensusNode #1 is also the only batcher-enabled node, so ConsensusNode #2 and #3 set `batcher_enabled=false` and only need their explicitly overridden ports free.
 
 **ConsensusNode**
 
@@ -22,7 +33,7 @@ Requirements:
 Example: three-node consensus (local dev, leader failover)
 
 Use three enodes in `network_boot_nodes` and three peer IDs in `consensus_peer_ids__json`.
-All three nodes may use `consensus_bootstrap=true`.
+All three nodes may use `consensus_bootstrap=true`, and exactly one consensus node should leave `batcher_enabled=true`.
 
 For convenience, define these first:
 ```bash

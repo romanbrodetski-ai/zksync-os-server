@@ -547,7 +547,10 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             finality_storage.clone(),
             l1_state.sl_block_number,
             node_startup_state.l1_state.l1_chain_id,
-            node_role.is_main().then_some(commit_submitted_rx),
+            // Only nodes that actually submit commit txs locally should arm the
+            // `UnexpectedCommit` guard — otherwise consensus followers configured with
+            // `batcher_config.enabled = false` panic the moment the leader's commit lands on L1.
+            (node_role.is_main() && config.batcher_config.enabled).then_some(commit_submitted_rx),
         )
         .await
         .expect("failed to start L1 commit watcher")
