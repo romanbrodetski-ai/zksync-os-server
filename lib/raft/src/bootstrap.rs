@@ -5,12 +5,11 @@ use std::time::Duration;
 use zksync_os_consensus_types::{RaftNode, RaftTypeConfig};
 use zksync_os_network::raft::protocol::RaftRouter;
 
-/// One-shot bootstrapper for the designated bootstrap node of a new raft cluster.
+/// One-shot bootstrapper for a node that may initialize a new raft cluster.
 ///
-/// Only one node in the cluster needs to run the bootstrap process. That node waits until all
-/// other members have established devp2p connections, then calls `raft.initialize()` to form the
-/// initial membership. All other nodes are simply started and wait to receive a `AppendEntries`
-/// from the newly elected leader.
+/// Nodes with bootstrap enabled wait until all other members have established devp2p connections,
+/// then call `raft.initialize()` to form the initial membership. It is valid for every consensus
+/// node to do this: the first initializer wins and the others skip once the cluster is initialized.
 ///
 /// If the cluster is already initialized (e.g. after a restart), `bootstrap_if_needed` is a
 /// no-op.

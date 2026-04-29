@@ -21,7 +21,7 @@ pub struct ConsensusRuntimeParts {
 
 pub struct RaftRuntimeExtras {
     pub protocol_handler: RaftProtocolHandler,
-    /// Present only on the designated bootstrap node. Non-bootstrap nodes have no bootstrapper.
+    /// Present on nodes configured to attempt cluster bootstrap.
     pub bootstrapper: Option<RaftBootstrapper>,
     pub status_rx: watch::Receiver<Option<RaftConsensusStatus>>,
 }
