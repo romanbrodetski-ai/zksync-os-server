@@ -274,6 +274,8 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         chain_id,
     );
 
+    prepare_raft_storage(&config).expect("failed to prepare raft storage");
+
     tracing::info!("Initializing BlockReplayStorage");
 
     let block_replay_storage = BlockReplayStorage::new(
@@ -1620,6 +1622,44 @@ async fn find_last_matching_main_node_block(
         }
     }
     Ok(left)
+}
+
+fn prepare_raft_storage(config: &Config) -> anyhow::Result<()> {
+    let raft_storage_path = config.general_config.rocks_db_path.join(RAFT_DB_NAME);
+    if config.consensus_config.force_clear_raft_history
+        && raft_storage_path_exists(&raft_storage_path)?
+    {
+        tracing::warn!(
+            path = %raft_storage_path.display(),
+            "force-clearing persisted raft history before startup"
+        );
+        std::fs::remove_dir_all(&raft_storage_path).with_context(|| {
+            format!(
+                "failed to remove raft storage at {}",
+                raft_storage_path.display()
+            )
+        })?;
+    }
+
+    if !config.consensus_config.enabled && raft_storage_path_exists(&raft_storage_path)? {
+        anyhow::bail!(
+            "consensus is disabled but persisted raft history exists at {}; \
+             either re-enable consensus or set `consensus.force_clear_raft_history=true` \
+             to delete stale raft state before startup",
+            raft_storage_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn raft_storage_path_exists(path: &Path) -> anyhow::Result<bool> {
+    path.try_exists().with_context(|| {
+        format!(
+            "failed to check whether raft storage exists at {}",
+            path.display()
+        )
+    })
 }
 
 #[cfg(test)]
