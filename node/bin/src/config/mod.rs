@@ -569,7 +569,8 @@ pub struct ConsensusConfig {
         "must include local peer id derived from `network.secret_key`"
     ))]
     pub peer_ids: Vec<PeerId>,
-    /// Initialize cluster membership on startup.
+    /// Attempt to initialize cluster membership on startup.
+    /// Safe to enable on every consensus node; only one initializer will win.
     #[config(default_t = false)]
     pub bootstrap: bool,
     /// Raft election timeout lower bound.

@@ -9,9 +9,9 @@ pub struct RaftConsensusConfig {
     /// Full list of peer IDs forming the cluster, including this node.
     /// Must contain `node_id`.
     pub peer_ids: Vec<PeerId>,
-    /// If `true`, this node will attempt to initialize the Raft cluster on startup
-    /// (bootstrap), waiting for all peers to connect first. Only one node needs this
-    /// flag; additional nodes with the flag set will safely skip if already initialized.
+    /// If `true`, this node will attempt to initialize the Raft cluster on startup,
+    /// waiting for all peers to connect first. This may be enabled on every
+    /// consensus node: the first initializer wins and the others safely skip.
     pub bootstrap: bool,
     /// Lower bound for the randomized election timeout. A follower that receives no
     /// heartbeat within a randomly chosen interval `[min, max]` starts a new election.

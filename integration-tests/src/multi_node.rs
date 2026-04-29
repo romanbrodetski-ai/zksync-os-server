@@ -556,8 +556,9 @@ impl MultiNodeTesterBuilder {
                 let l1 = l1.clone();
                 async move {
                     let network_port = locked_port.port;
-                    // Launch bootstrap node last in configuration terms, but start every node concurrently.
-                    let bootstrap = i + 1 == num_nodes;
+                    // Production configs set this on every consensus node. The first node to
+                    // initialize the cluster wins; the rest safely observe that it is initialized.
+                    let bootstrap = true;
                     let expected_node_id = zksync_os_network::NodeRecord::from_secret_key(
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), network_port),
                         &secret,

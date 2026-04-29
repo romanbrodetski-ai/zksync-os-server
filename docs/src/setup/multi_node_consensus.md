@@ -14,14 +14,15 @@ A ConsensusNode will propose blocks when it is leader and will follow canonized 
 Requirements:
 - Networking must be enabled (Raft RPC is transported over `lib/network`).
 - `consensus_enabled=true` and a list of Raft peer IDs (`consensus_peer_ids`).
-- Exactly one node should set `consensus_bootstrap=true` for initial cluster membership.
+- Set `consensus_bootstrap=true` on each consensus node that may initialize cluster membership.
+  It is safe to set this on all consensus nodes; the first initializer wins.
 - Local Raft node ID is always derived from `network_secret_key`.
 - `consensus_peer_ids` must include that derived local ID.
 
 Example: three-node consensus (local dev, leader failover)
 
 Use three enodes in `network_boot_nodes` and three peer IDs in `consensus_peer_ids__json`.
-Only one node should use `consensus_bootstrap=true`.
+All three nodes may use `consensus_bootstrap=true`.
 
 For convenience, define these first:
 ```bash
@@ -36,7 +37,7 @@ PEER_IDS_JSON='[
 BOOT_NODES="${ENODE_1},${ENODE_2},${ENODE_3}"
 ```
 
-ConsensusNode #1 (bootstrap):
+ConsensusNode #1:
 ```bash
 RUST_LOG="INFO,zksync_os_network=debug,zksync_os_raft=debug,openraft=info" \
 network_enabled=true \
@@ -59,7 +60,7 @@ network_address=127.0.0.1 \
 network_port=3061 \
 network_boot_nodes="${BOOT_NODES}" \
 consensus_enabled=true \
-consensus_bootstrap=false \
+consensus_bootstrap=true \
 consensus_peer_ids__json="${PEER_IDS_JSON}" \
 batcher_enabled=false \
 status_server_enabled=false \
@@ -78,7 +79,7 @@ network_address=127.0.0.1 \
 network_port=3062 \
 network_boot_nodes="${BOOT_NODES}" \
 consensus_enabled=true \
-consensus_bootstrap=false \
+consensus_bootstrap=true \
 consensus_peer_ids__json="${PEER_IDS_JSON}" \
 batcher_enabled=false \
 status_server_enabled=false \
