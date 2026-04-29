@@ -128,7 +128,7 @@ async fn consensus_cluster_includes_simple_transaction_with_wait() -> anyhow::Re
 }
 
 #[test_log::test(tokio::test)]
-async fn consensus_can_restart_disabled_after_clearing_raft_history() -> anyhow::Result<()> {
+async fn consensus_can_be_reenabled_after_clearing_raft_history() -> anyhow::Result<()> {
     let mut cluster = MultiNodeTester::builder()
         .with_consensus_secret_keys(consensus_test_keys(1))
         .build()
@@ -143,6 +143,8 @@ async fn consensus_can_restart_disabled_after_clearing_raft_history() -> anyhow:
 
         cluster.suspend_node(leader_index).await?;
 
+        // This creates a WAL/raft gap: the restarted node clears raft history, then
+        // produces a block through loopback consensus while raft is disabled.
         cluster
             .start_node_with_overrides(leader_index, |config| {
                 config.consensus_config.enabled = false;
@@ -152,8 +154,33 @@ async fn consensus_can_restart_disabled_after_clearing_raft_history() -> anyhow:
 
         send_transfer(&cluster, leader_index).await?;
 
-        // TODO: investigate the follow-up transition where consensus is enabled again after
-        // running with consensus disabled and cleared raft history.
+        cluster.suspend_node(leader_index).await?;
+
+        // Re-enable consensus after the gap. The old WAL blocks are replayed locally;
+        // new blocks should be raft-canonized from this point onward.
+        cluster
+            .start_node_with_overrides(leader_index, |config| {
+                config.consensus_config.enabled = true;
+                config.consensus_config.force_clear_raft_history = false;
+            })
+            .await?;
+
+        let leader_index = cluster
+            .wait_for_raft_cluster_formation(CLUSTER_FORMATION_TIMEOUT)
+            .await?;
+
+        send_transfer(&cluster, leader_index).await?;
+
+        // Restart once more with consensus enabled to verify the sparse raft history
+        // written after re-enable is loadable.
+        cluster.suspend_node(leader_index).await?;
+        cluster.start_node(leader_index).await?;
+
+        let leader_index = cluster
+            .wait_for_raft_cluster_formation(CLUSTER_FORMATION_TIMEOUT)
+            .await?;
+
+        send_transfer(&cluster, leader_index).await?;
 
         Ok(())
     }
