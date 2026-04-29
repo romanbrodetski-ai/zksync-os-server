@@ -126,9 +126,6 @@ pub(crate) fn io_err_msg(
 
 /// Snapshot of the raw Raft storage state captured before `Raft::new()` runs.
 ///
-/// Fields are keyed on what each CF holds at rest, before OpenRaft's startup
-/// reapplication pass. Comparing these values against post-init metrics lets
-/// you see exactly which entries were reapplied during startup.
 #[derive(Debug)]
 pub struct RaftStorageStartupState {
     /// Last `Vote` persisted to the Vote CF (the node this peer voted for and in which term).
