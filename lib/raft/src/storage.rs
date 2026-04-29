@@ -156,9 +156,6 @@ impl RaftLogStore {
     }
 
     /// Reads the raw storage state that `Raft::new()` will use to initialise itself.
-    ///
-    /// Call this **before** `Raft::new()` so you capture what was on disk from the
-    /// previous run, not the post-reapplication result.
     #[allow(clippy::result_large_err)]
     pub fn startup_state(
         &self,
