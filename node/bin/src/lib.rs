@@ -800,10 +800,12 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         "l1 batch persist watcher",
         L1PersistBatchWatcher::create_watcher(
             config.l1_watcher_config.clone().into(),
-            node_startup_state.l1_state.diamond_proxy_sl.clone(),
+            node_startup_state
+                .l1_state
+                .settlement_layer_intervals
+                .clone(),
             persistent_batch_storage.clone(),
         )
-        .await
         .expect("failed to start L1 batch persist watcher")
         .run(),
     );
