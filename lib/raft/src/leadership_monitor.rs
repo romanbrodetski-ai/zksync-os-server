@@ -1,10 +1,48 @@
 use crate::model::ConsensusRole;
 use crate::status::RaftConsensusStatus;
+use openraft::error::{CheckIsLeaderError, RaftError};
 use openraft::{Raft, ServerState};
-use std::time::Duration;
+use reth_network_peers::PeerId;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
-use tokio::time::timeout;
-use zksync_os_consensus_types::RaftTypeConfig;
+use tokio::time::{interval, timeout, MissedTickBehavior};
+use zksync_os_consensus_types::{RaftNode, RaftTypeConfig};
+
+/// How often we re-probe `ensure_linearizable` while holding the Leader state but waiting
+/// for confirmation. Decoupled from openraft's metrics channel — that fires many times per
+/// second during elections, and probing on every change produced one log line per metrics
+/// tick during a stuck-leader window.
+const PROBE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Per-probe budget for the linearizability round-trip.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// While confirmation keeps failing with the same cause, re-emit the log at most this often
+/// so a stuck cluster keeps a "still degraded" reminder in the log without flooding it.
+const STUCK_REMINDER_INTERVAL: Duration = Duration::from_secs(30);
+
+type LinearizableErr = RaftError<PeerId, CheckIsLeaderError<PeerId, RaftNode>>;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProbeFailure {
+    /// This node has been deposed; another node is now leader. Routine after a clean
+    /// failover or on a rejoining stale leader — informational, not an alarm.
+    ForwardToLeader,
+    /// Could not collect a quorum ack within the probe timeout. The cluster cannot make
+    /// progress; this is the operational alarm condition.
+    QuorumNotEnough,
+    /// Probe call did not return within `PROBE_TIMEOUT`. Usually indicates the same problem
+    /// as `QuorumNotEnough` but caught by our local timer.
+    Timeout,
+    /// `Raft` task is no longer running. Typically a fatal startup or shutdown condition.
+    Fatal,
+}
+
+struct FailureStreak {
+    kind: ProbeFailure,
+    started_at: Instant,
+    last_logged_at: Instant,
+}
 
 /// Spawns a background task that translates OpenRaft metrics into two node-facing signals:
 /// a coarse `ConsensusRole` watch channel used by the sequencer, and a richer
@@ -25,50 +63,66 @@ pub fn spawn_leadership_monitor(
 ) {
     let mut metrics_rx = raft.metrics();
     tokio::spawn(async move {
-        let mut last_logged = None;
+        let mut last_metrics_key = None;
         let mut leader_confirmed = false;
         let mut prev_role = ConsensusRole::Replica;
+        let mut streak: Option<FailureStreak> = None;
+        let mut probe_timer = interval(PROBE_INTERVAL);
+        probe_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
-            if metrics_rx.changed().await.is_err() {
-                panic!("OpenRaft metrics channel closed unexpectedly; consensus subsystem is gone");
+            // React to either an openraft metrics change or the periodic probe tick. Using
+            // an interval here decouples probe rate from openraft's metrics churn, which
+            // can fire many times per second during elections.
+            tokio::select! {
+                biased;
+                changed = metrics_rx.changed() => {
+                    if changed.is_err() {
+                        panic!("OpenRaft metrics channel closed unexpectedly; consensus subsystem is gone");
+                    }
+                }
+                _ = probe_timer.tick() => {}
             }
-            let metrics = metrics_rx.borrow().clone();
 
-            let log_key = (metrics.state, metrics.current_term, metrics.current_leader);
-            if last_logged != Some(log_key) {
+            let metrics = metrics_rx.borrow().clone();
+            let metrics_key = (metrics.state, metrics.current_term, metrics.current_leader);
+            if last_metrics_key.as_ref() != Some(&metrics_key) {
                 tracing::debug!(
                     "OpenRaft metrics changed: state={:?}, term={}, leader={:?}",
                     metrics.state,
                     metrics.current_term,
                     metrics.current_leader
                 );
-                last_logged = Some(log_key);
+                last_metrics_key = Some(metrics_key);
             }
 
             let claims_leader = matches!(metrics.state, ServerState::Leader);
             if !claims_leader {
+                // Once we stop claiming leader, any in-progress streak is moot; the role
+                // change itself is logged below.
+                streak = None;
                 leader_confirmed = false;
             } else if !leader_confirmed {
-                // Metrics show Leader, but that can happen transiently while the node is
-                // replaying committed logs after an election. `ensure_linearizable()` does
-                // a quorum round-trip that only succeeds once we hold an active lease,
-                // confirming we are the current leader and can safely produce blocks.
-                leader_confirmed =
-                    match timeout(Duration::from_secs(2), raft.ensure_linearizable()).await {
-                        Ok(Ok(_)) => {
-                            tracing::info!("OpenRaft leader confirmation succeeded");
-                            true
+                match timeout(PROBE_TIMEOUT, raft.ensure_linearizable()).await {
+                    Ok(Ok(_)) => {
+                        if let Some(s) = streak.take() {
+                            tracing::info!(
+                                "raft leader confirmed (recovered from {:?} after {:?})",
+                                s.kind,
+                                s.started_at.elapsed()
+                            );
+                        } else {
+                            tracing::info!("raft leader confirmed");
                         }
-                        Ok(Err(err)) => {
-                            tracing::warn!("OpenRaft leader confirmation failed: {err}");
-                            false
-                        }
-                        Err(_) => {
-                            tracing::warn!("OpenRaft leader confirmation timed out");
-                            false
-                        }
-                    };
+                        leader_confirmed = true;
+                    }
+                    Ok(Err(err)) => {
+                        note_failure(&mut streak, classify(&err), Some(&err));
+                    }
+                    Err(_) => {
+                        note_failure(&mut streak, ProbeFailure::Timeout, None);
+                    }
+                }
             }
 
             let role = if claims_leader && leader_confirmed {
@@ -96,4 +150,78 @@ pub fn spawn_leadership_monitor(
             }
         }
     });
+}
+
+fn classify(err: &LinearizableErr) -> ProbeFailure {
+    match err {
+        RaftError::APIError(CheckIsLeaderError::ForwardToLeader(_)) => ProbeFailure::ForwardToLeader,
+        RaftError::APIError(CheckIsLeaderError::QuorumNotEnough(_)) => ProbeFailure::QuorumNotEnough,
+        RaftError::Fatal(_) => ProbeFailure::Fatal,
+    }
+}
+
+fn note_failure(
+    streak: &mut Option<FailureStreak>,
+    kind: ProbeFailure,
+    err: Option<&LinearizableErr>,
+) {
+    let now = Instant::now();
+    match streak {
+        Some(s) if s.kind == kind => {
+            // Same failure as last tick: stay quiet unless the reminder window has elapsed.
+            if now.duration_since(s.last_logged_at) >= STUCK_REMINDER_INTERVAL {
+                emit_failure(kind, err, Some(now.duration_since(s.started_at)));
+                s.last_logged_at = now;
+            }
+        }
+        _ => {
+            emit_failure(kind, err, None);
+            *streak = Some(FailureStreak {
+                kind,
+                started_at: now,
+                last_logged_at: now,
+            });
+        }
+    }
+}
+
+fn emit_failure(kind: ProbeFailure, err: Option<&LinearizableErr>, elapsed: Option<Duration>) {
+    let stuck = elapsed
+        .map(|e| format!(" (still failing after {e:?})"))
+        .unwrap_or_default();
+    match kind {
+        ProbeFailure::ForwardToLeader => {
+            // Expected after a failover or for a stale leader catching up — surface as
+            // INFO rather than WARN so it doesn't read like an alarm.
+            let leader = err
+                .and_then(|e| match e {
+                    RaftError::APIError(CheckIsLeaderError::ForwardToLeader(f)) => f.leader_id,
+                    _ => None,
+                })
+                .map(|id| format!("{id}"))
+                .unwrap_or_else(|| "(unknown)".to_string());
+            tracing::info!("raft node deposed: cluster leader is now {leader}{stuck}");
+        }
+        ProbeFailure::QuorumNotEnough => {
+            // The operational alarm: this node holds the leader role but cannot reach a
+            // quorum to commit, so the cluster cannot make progress. The `cluster` field
+            // openraft attaches is a pre-formatted Debug dump of the full membership and
+            // is too noisy to log; the acked set alone is enough to tell who replied.
+            let acked = err
+                .and_then(|e| match e {
+                    RaftError::APIError(CheckIsLeaderError::QuorumNotEnough(q)) => {
+                        Some(format!(", acked by {} of cluster: {:?}", q.got.len(), q.got))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            tracing::warn!("raft cannot reach quorum{acked}{stuck}");
+        }
+        ProbeFailure::Timeout => {
+            tracing::warn!("raft quorum probe timed out after {PROBE_TIMEOUT:?}{stuck}");
+        }
+        ProbeFailure::Fatal => {
+            tracing::error!("raft is in a fatal state{stuck}");
+        }
+    }
 }
