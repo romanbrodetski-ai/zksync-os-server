@@ -80,7 +80,10 @@ pub fn spawn_leadership_monitor(
                 biased;
                 changed = metrics_rx.changed() => {
                     if changed.is_err() {
-                        panic!("OpenRaft metrics channel closed unexpectedly; consensus subsystem is gone");
+                        // OpenRaft has dropped its metrics sender — the engine is gone, which
+                        // happens on graceful shutdown after `raft.shutdown()`.
+                        tracing::info!("OpenRaft metrics channel closed; leadership monitor exiting");
+                        break;
                     }
                 }
                 _ = probe_timer.tick() => {}
