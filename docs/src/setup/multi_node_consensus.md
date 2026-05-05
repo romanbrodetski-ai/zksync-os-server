@@ -15,10 +15,10 @@ Before starting any node, an L1 must be running at `general_l1_rpc_url` (default
 
 ```bash
 gzip -d < ./local-chains/v30.2/l1-state.json.gz > /tmp/l1-state.json
-anvil --load-state /tmp/l1-state.json --port 8545 --block-time 0.25 --mixed-mining
+anvil --load-state /tmp/l1-state.json --port 8545 --block-time 0.25 --mixed-mining --slots-in-an-epoch 10
 ```
 
-The default ports used by ConsensusNode #1 below (`3050` RPC, `3060` p2p, `3071` status server, `3124` prover API, `3312` Prometheus) must be free on the host. In this example ConsensusNode #1 is also the only batcher-enabled node, so ConsensusNode #2 and #3 set `batcher_enabled=false` and only need their explicitly overridden ports free.
+The default ports used by ConsensusNode #1 below (`3050` RPC, `3060` p2p, `3071` status server, `3124` prover API, `3312` Prometheus) must be free on the host. In this example ConsensusNode #1 is also the only batcher-enabled node, so ConsensusNode #2 and #3 set `BATCHER_ENABLED=false` and `PROVER_API_ENABLED=false`. Each node keeps its status server enabled on a unique port so failover can be checked through `/status`.
 
 **ConsensusNode**
 
@@ -50,54 +50,54 @@ BOOT_NODES="${ENODE_1},${ENODE_2},${ENODE_3}"
 
 ConsensusNode #1:
 ```bash
-RUST_LOG="INFO,zksync_os_network=debug,zksync_os_raft=debug,openraft=info" \
-network_enabled=true \
-network_secret_key=0af6153646bbf600f55ce455e1995283542b1ae25ce2622ce1fda443927c5308 \
-network_address=127.0.0.1 \
-network_port=3060 \
-network_boot_nodes="${BOOT_NODES}" \
-consensus_enabled=true \
-consensus_bootstrap=true \
-consensus_peer_ids__json="${PEER_IDS_JSON}" \
-cargo run
+NETWORK_ENABLED=true \
+NETWORK_SECRET_KEY=0af6153646bbf600f55ce455e1995283542b1ae25ce2622ce1fda443927c5308 \
+NETWORK_ADDRESS=127.0.0.1 \
+NETWORK_PORT=3060 \
+NETWORK_BOOT_NODES="${BOOT_NODES}" \
+CONSENSUS_ENABLED=true \
+CONSENSUS_BOOTSTRAP=true \
+CONSENSUS_PEER_IDS__JSON="${PEER_IDS_JSON}" \
+GENERAL_ROCKS_DB_PATH="db/en-1" \
+cargo run -- --config ./local-chains/local_dev.yaml --config ./local-chains/v30.2/default/config.yaml
 ```
 
 ConsensusNode #2:
 ```bash
-RUST_LOG="INFO,zksync_os_network=debug,zksync_os_raft=debug,openraft=info" \
-network_enabled=true \
-network_secret_key=c2c8042b03801e2e14b395ed24f970ead7646a9ff315b54f747bcefdb99afda7 \
-network_address=127.0.0.1 \
-network_port=3061 \
-network_boot_nodes="${BOOT_NODES}" \
-consensus_enabled=true \
-consensus_bootstrap=true \
-consensus_peer_ids__json="${PEER_IDS_JSON}" \
-batcher_enabled=false \
-status_server_enabled=false \
-rpc_address=0.0.0.0:3051 \
-observability_prometheus_port=3313 \
-general_rocks_db_path="db/en-2" \
-cargo run
+NETWORK_ENABLED=true \
+NETWORK_SECRET_KEY=c2c8042b03801e2e14b395ed24f970ead7646a9ff315b54f747bcefdb99afda7 \
+NETWORK_ADDRESS=127.0.0.1 \
+NETWORK_PORT=3061 \
+NETWORK_BOOT_NODES="${BOOT_NODES}" \
+CONSENSUS_ENABLED=true \
+CONSENSUS_BOOTSTRAP=true \
+CONSENSUS_PEER_IDS__JSON="${PEER_IDS_JSON}" \
+BATCHER_ENABLED=false \
+PROVER_API_ENABLED=false \
+STATUS_SERVER_ADDRESS=0.0.0.0:3072 \
+RPC_ADDRESS=0.0.0.0:3051 \
+OBSERVABILITY_PROMETHEUS_PORT=3313 \
+GENERAL_ROCKS_DB_PATH="db/en-2" \
+cargo run -- --config ./local-chains/local_dev.yaml --config ./local-chains/v30.2/default/config.yaml
 ```
 
 ConsensusNode #3:
 ```bash
-RUST_LOG="INFO,zksync_os_network=debug,zksync_os_raft=debug,openraft=info" \
-network_enabled=true \
-network_secret_key=8b50ece5c94762fb0b8dcd2f859fb0132b86c0540c388806b6a03e0b1c25978d \
-network_address=127.0.0.1 \
-network_port=3062 \
-network_boot_nodes="${BOOT_NODES}" \
-consensus_enabled=true \
-consensus_bootstrap=true \
-consensus_peer_ids__json="${PEER_IDS_JSON}" \
-batcher_enabled=false \
-status_server_enabled=false \
-rpc_address=0.0.0.0:3052 \
-observability_prometheus_port=3314 \
-general_rocks_db_path="db/en-3" \
-cargo run
+NETWORK_ENABLED=true \
+NETWORK_SECRET_KEY=8b50ece5c94762fb0b8dcd2f859fb0132b86c0540c388806b6a03e0b1c25978d \
+NETWORK_ADDRESS=127.0.0.1 \
+NETWORK_PORT=3062 \
+NETWORK_BOOT_NODES="${BOOT_NODES}" \
+CONSENSUS_ENABLED=true \
+CONSENSUS_BOOTSTRAP=true \
+CONSENSUS_PEER_IDS__JSON="${PEER_IDS_JSON}" \
+BATCHER_ENABLED=false \
+PROVER_API_ENABLED=false \
+STATUS_SERVER_ADDRESS=0.0.0.0:3073 \
+RPC_ADDRESS=0.0.0.0:3052 \
+OBSERVABILITY_PROMETHEUS_PORT=3314 \
+GENERAL_ROCKS_DB_PATH="db/en-3" \
+cargo run -- --config ./local-chains/local_dev.yaml --config ./local-chains/v30.2/default/config.yaml
 ```
 
 Failover check:
