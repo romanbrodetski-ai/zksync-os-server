@@ -1114,7 +1114,7 @@ async fn run_main_node_pipeline(
             .join(INTERNAL_CONFIG_FILE_NAME),
     );
 
-    let (replays_to_execute_sender, replays_to_execute) = tokio::sync::mpsc::channel(8);
+    let (replays_to_execute_sender, replays_to_execute) = tokio::sync::mpsc::unbounded_channel();
     let (applied_block_number_sender, applied_block_number_receiver) =
         watch::channel(starting_block - 1);
 
