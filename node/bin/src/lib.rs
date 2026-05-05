@@ -430,7 +430,6 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         canonization_engine,
         leadership,
         raft,
-        raft_handle,
     } = if config.consensus_config.enabled {
         init_consensus(
             runtime,
@@ -451,27 +450,28 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         loopback_consensus()
     };
     let (raft_protocol_handler, raft_bootstrapper, raft_status_rx) = match raft {
-        Some(raft) => (
-            Some(raft.protocol_handler),
-            raft.bootstrapper,
-            Some(raft.status_rx),
-        ),
+        Some(raft) => {
+            // OpenRaft spawns its core task with plain tokio::spawn, outside of reth_tasks.
+            // Register an explicit shutdown task so that graceful_shutdown_with_timeout waits
+            // for the RaftCore to finish — releasing its RocksDB handles — before returning.
+            let handle = raft.handle;
+            runtime.spawn_critical_with_graceful_shutdown_signal(
+                "raft-shutdown",
+                |shutdown| async move {
+                    let _ = shutdown.await;
+                    if let Err(e) = handle.shutdown().await {
+                        tracing::warn!(%e, "raft shutdown error");
+                    }
+                },
+            );
+            (
+                Some(raft.protocol_handler),
+                raft.bootstrapper,
+                Some(raft.status_rx),
+            )
+        }
         None => (None, None, None),
     };
-    if let Some(raft) = raft_handle {
-        // OpenRaft spawns its core task with plain tokio::spawn, outside of reth_tasks.
-        // Register an explicit shutdown task so that graceful_shutdown_with_timeout waits
-        // for the RaftCore to finish — releasing its RocksDB handles — before returning.
-        runtime.spawn_critical_with_graceful_shutdown_signal(
-            "raft-shutdown",
-            |shutdown| async move {
-                let _ = shutdown.await;
-                if let Err(e) = raft.shutdown().await {
-                    tracing::warn!(%e, "raft shutdown error");
-                }
-            },
-        );
-    }
     if config.network_config.enabled {
         tracing::info!("initializing p2p networking");
         let batch_verification_policy_config: BatchVerificationPolicyConfig =

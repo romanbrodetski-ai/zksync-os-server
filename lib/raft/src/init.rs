@@ -129,8 +129,8 @@ pub async fn init_consensus(
             protocol_handler,
             bootstrapper,
             status_rx,
+            handle: raft,
         }),
-        raft_handle: Some(raft),
     })
 }
 
@@ -139,7 +139,6 @@ pub fn loopback_consensus() -> ConsensusRuntimeParts {
         canonization_engine: BlockCanonizationEngine::Noop(NoopCanonization::new()),
         leadership: LeadershipSignal::AlwaysLeader,
         raft: None,
-        raft_handle: None,
     }
 }
 

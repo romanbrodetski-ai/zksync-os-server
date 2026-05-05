@@ -13,10 +13,6 @@ pub struct ConsensusRuntimeParts {
     pub canonization_engine: BlockCanonizationEngine,
     pub leadership: LeadershipSignal,
     pub raft: Option<RaftRuntimeExtras>,
-    /// A handle to the OpenRaft engine for clean shutdown. The caller must await
-    /// `raft_handle.shutdown()` during node teardown so that the RaftCore task — and
-    /// the RocksDB handles it owns — are released before the process cleans up.
-    pub raft_handle: Option<Raft<RaftTypeConfig>>,
 }
 
 pub struct RaftRuntimeExtras {
@@ -24,6 +20,10 @@ pub struct RaftRuntimeExtras {
     /// Present on nodes configured to attempt cluster bootstrap.
     pub bootstrapper: Option<RaftBootstrapper>,
     pub status_rx: watch::Receiver<Option<RaftConsensusStatus>>,
+    /// Handle to the OpenRaft engine for clean shutdown. The caller must await
+    /// `handle.shutdown()` during node teardown so that the RaftCore task — and the
+    /// RocksDB handles it owns — are released before the process cleans up.
+    pub handle: Raft<RaftTypeConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
