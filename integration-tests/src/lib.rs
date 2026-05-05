@@ -106,7 +106,7 @@ pub const BATCH_VERIFICATION_KEYS: [&str; 2] = [
 /// shutdown. We put 60s here until zksync-os v0.4.0 which will get rid of RISC-V simulator and
 /// allow async/abortable prover input generation.
 const NODE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
-const PORT_ACQUISITION_TIMEOUT: Duration = Duration::from_secs(15);
+const PORT_ACQUISITION_TIMEOUT: Duration = Duration::from_secs(30);
 const PORT_ACQUISITION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Set of addresses (i.e. public keys) expected by batch verification. Derived from [`BATCH_VERIFICATION_KEYS`].
 static BATCH_VERIFICATION_ADDRESSES: LazyLock<Vec<String>> = LazyLock::new(|| {
@@ -265,6 +265,7 @@ pub struct Tester {
     runtime: Runtime,
     task_manager_handle: Option<JoinHandle<Result<(), PanickedTaskError>>>,
     config: Config,
+    ports: Ports,
 
     #[allow(dead_code)]
     tempdir: Arc<tempfile::TempDir>,
@@ -287,6 +288,7 @@ pub struct Tester {
 pub struct StoppedTester {
     l1: AnvilL1,
     config: Config,
+    ports: Ports,
     tempdir: Arc<tempfile::TempDir>,
     log_state: NodeLogState,
     chain_layout: ChainLayout<'static>,
@@ -296,9 +298,11 @@ pub struct StoppedTester {
 #[derive(Debug)]
 struct SupportingNode {
     runtime: Runtime,
+    _ports: Ports,
     _tempdir: Arc<TempDir>,
 }
 
+#[derive(Debug)]
 struct Ports {
     l2_rpc: LockedPort,
     prover_api: LockedPort,
@@ -467,6 +471,7 @@ impl Tester {
             runtime,
             l1,
             config,
+            ports,
             tempdir,
             log_state,
             chain_layout,
@@ -483,6 +488,7 @@ impl Tester {
             log_state,
             chain_layout,
             config,
+            ports,
             owned_supporting_nodes,
         })
     }
@@ -587,7 +593,7 @@ impl Tester {
         wait_for_initial_deposit: bool,
         held_ports: Option<Ports>,
     ) -> anyhow::Result<Self> {
-        let _ports = match held_ports {
+        let ports = match held_ports {
             Some(ports) => ports,
             None => Ports::from_config(&config).await?,
         };
@@ -757,6 +763,7 @@ impl Tester {
             runtime,
             task_manager_handle: Some(task_manager_handle),
             config,
+            ports,
             l2_rpc_address: l2_rpc_address.replace("0.0.0.0:", "http://localhost:"),
             status_server_url,
             gateway_rpc_url,
@@ -804,9 +811,16 @@ impl StoppedTester {
             chain_layout,
             log_state,
             owned_supporting_nodes,
+            ports,
             ..
         } = self;
-        let ports = Ports::from_config(&config).await?;
+        let ports = if ports.matches_config(&config)? {
+            ports.wait_until_unused().await?;
+            ports
+        } else {
+            drop(ports);
+            Ports::from_config(&config).await?
+        };
         let mut tester = Tester::launch_node_inner(
             l1,
             config,
@@ -835,6 +849,7 @@ impl SupportingNode {
     fn from_tester(tester: Tester) -> Self {
         let Tester {
             runtime,
+            ports,
             tempdir,
             owned_supporting_nodes,
             ..
@@ -842,6 +857,7 @@ impl SupportingNode {
         drop(owned_supporting_nodes);
         Self {
             runtime,
+            _ports: ports,
             _tempdir: tempdir,
         }
     }
@@ -924,6 +940,35 @@ impl Ports {
             })?,
         })
     }
+
+    fn matches_config(&self, config: &Config) -> anyhow::Result<bool> {
+        Ok(
+            self.l2_rpc.port == parse_local_port(&config.rpc_config.address)?
+                && self.prover_api.port == parse_local_port(&config.prover_api_config.address)?
+                && self.network.port == config.network_config.port
+                && self.status.port == parse_local_port(&config.status_server_config.address)?,
+        )
+    }
+
+    async fn wait_until_unused(&self) -> anyhow::Result<()> {
+        wait_for_port_to_be_unused(self.l2_rpc.port)
+            .await
+            .with_context(|| format!("failed waiting for L2 RPC port {}", self.l2_rpc.port))?;
+        wait_for_port_to_be_unused(self.prover_api.port)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed waiting for prover API port {}",
+                    self.prover_api.port
+                )
+            })?;
+        wait_for_port_to_be_unused(self.network.port)
+            .await
+            .with_context(|| format!("failed waiting for network port {}", self.network.port))?;
+        wait_for_port_to_be_unused(self.status.port)
+            .await
+            .with_context(|| format!("failed waiting for status server port {}", self.status.port))
+    }
 }
 
 fn parse_local_port(address: &str) -> anyhow::Result<u16> {
@@ -948,6 +993,24 @@ async fn acquire_port_with_retry(port: u16) -> anyhow::Result<LockedPort> {
                     format!(
                         "port {port} did not become acquirable within {PORT_ACQUISITION_TIMEOUT:?}"
                     )
+                });
+            }
+        }
+    }
+}
+
+async fn wait_for_port_to_be_unused(port: u16) -> anyhow::Result<()> {
+    let deadline = tokio::time::Instant::now() + PORT_ACQUISITION_TIMEOUT;
+    loop {
+        match LockedPort::check_port_is_unused(port).await {
+            Ok(_) => return Ok(()),
+            Err(err) if tokio::time::Instant::now() < deadline => {
+                tracing::info!(port, %err, "waiting for port to become unused");
+                tokio::time::sleep(PORT_ACQUISITION_POLL_INTERVAL).await;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("port {port} did not become unused within {PORT_ACQUISITION_TIMEOUT:?}")
                 });
             }
         }
