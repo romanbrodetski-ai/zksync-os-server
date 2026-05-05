@@ -30,6 +30,7 @@ zksync_os_sequencer.workspace = true
 zksync_os_storage_api.workspace = true
 zksync_os_types.workspace = true
 reth-network-peers.workspace = true
+reth-tasks.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

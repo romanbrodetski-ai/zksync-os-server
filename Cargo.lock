@@ -14762,6 +14762,7 @@ dependencies = [
  "futures",
  "openraft",
  "reth-network-peers",
+ "reth-tasks",
  "serde",
  "serde_json",
  "tempfile",

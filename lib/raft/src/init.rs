@@ -11,6 +11,7 @@ use crate::storage::{RaftLogStore, RaftStorageStartupState};
 use anyhow::Context;
 use openraft::{Config, Raft, SnapshotPolicy};
 use reth_network_peers::PeerId;
+use reth_tasks::Runtime;
 use std::collections::BTreeMap;
 use tokio::sync::{mpsc, watch};
 use zksync_os_consensus_types::RaftNode;
@@ -26,6 +27,7 @@ use zksync_os_storage_api::ReadReplay;
 /// consistent with what `BlockApplier` has durably persisted: a block is only considered
 /// applied once it is in the WAL.
 pub async fn init_consensus(
+    runtime: &Runtime,
     config: RaftConsensusConfig,
     block_replay_storage: Box<dyn ReadReplay>,
 ) -> anyhow::Result<ConsensusRuntimeParts> {
@@ -95,7 +97,13 @@ pub async fn init_consensus(
 
     let (leader_tx, leader_rx) = watch::channel(ConsensusRole::Replica);
     let (status_tx, status_rx) = watch::channel::<Option<RaftConsensusStatus>>(None);
-    spawn_leadership_monitor(raft.clone(), node_id.to_string(), leader_tx, status_tx);
+    spawn_leadership_monitor(
+        runtime,
+        raft.clone(),
+        node_id.to_string(),
+        leader_tx,
+        status_tx,
+    );
     let rpc_handler = RaftRpcHandler::new(raft.clone());
     let protocol_handler = RaftProtocolHandler::new(rpc_handler, router.clone());
 

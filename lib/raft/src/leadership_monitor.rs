@@ -3,6 +3,7 @@ use crate::status::RaftConsensusStatus;
 use openraft::error::{CheckIsLeaderError, RaftError};
 use openraft::{Raft, ServerState};
 use reth_network_peers::PeerId;
+use reth_tasks::Runtime;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::time::{MissedTickBehavior, interval, timeout};
@@ -56,13 +57,14 @@ struct FailureStreak {
 /// The task exits automatically when the OpenRaft metrics channel closes or when all receivers
 /// for both output watch channels are dropped.
 pub fn spawn_leadership_monitor(
+    runtime: &Runtime,
     raft: Raft<RaftTypeConfig>,
     node_id_str: String,
     leader_tx: watch::Sender<ConsensusRole>,
     status_tx: watch::Sender<Option<RaftConsensusStatus>>,
 ) {
     let mut metrics_rx = raft.metrics();
-    tokio::spawn(async move {
+    runtime.spawn_critical_task("raft leadership monitor", async move {
         let mut last_metrics_key = None;
         let mut leader_confirmed = false;
         let mut prev_role = ConsensusRole::Replica;

@@ -433,6 +433,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         raft_handle,
     } = if config.consensus_config.enabled {
         init_consensus(
+            runtime,
             config
                 .consensus_config
                 .clone()
