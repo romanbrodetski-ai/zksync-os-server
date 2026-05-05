@@ -576,10 +576,11 @@ pub struct ConsensusConfig {
         "must include local peer id derived from `network.secret_key`"
     ))]
     pub peer_ids: Vec<PeerId>,
+    /// WARNING: Assumes all configured consensus nodes are already caught up to the same
+    /// canonical L2 state. Bootstrap does not catch up stale nodes before admitting them
+    /// to the cluster.
     /// Attempt to initialize cluster membership on startup.
     /// Safe to enable on every consensus node; only one initializer will win.
-    /// Assumes all configured consensus nodes are already caught up to the same canonical L2
-    /// state. Bootstrap does not catch up stale nodes before admitting them to the cluster.
     #[config(default_t = false)]
     pub bootstrap: bool,
     /// Raft election timeout lower bound.
