@@ -5,7 +5,7 @@ use openraft::{Raft, ServerState};
 use reth_network_peers::PeerId;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
-use tokio::time::{interval, timeout, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use zksync_os_consensus_types::{RaftNode, RaftTypeConfig};
 
 /// How often we re-probe `ensure_linearizable` while holding the Leader state but waiting
@@ -154,8 +154,12 @@ pub fn spawn_leadership_monitor(
 
 fn classify(err: &LinearizableErr) -> ProbeFailure {
     match err {
-        RaftError::APIError(CheckIsLeaderError::ForwardToLeader(_)) => ProbeFailure::ForwardToLeader,
-        RaftError::APIError(CheckIsLeaderError::QuorumNotEnough(_)) => ProbeFailure::QuorumNotEnough,
+        RaftError::APIError(CheckIsLeaderError::ForwardToLeader(_)) => {
+            ProbeFailure::ForwardToLeader
+        }
+        RaftError::APIError(CheckIsLeaderError::QuorumNotEnough(_)) => {
+            ProbeFailure::QuorumNotEnough
+        }
         RaftError::Fatal(_) => ProbeFailure::Fatal,
     }
 }
@@ -209,9 +213,11 @@ fn emit_failure(kind: ProbeFailure, err: Option<&LinearizableErr>, elapsed: Opti
             // is too noisy to log; the acked set alone is enough to tell who replied.
             let acked = err
                 .and_then(|e| match e {
-                    RaftError::APIError(CheckIsLeaderError::QuorumNotEnough(q)) => {
-                        Some(format!(", acked by {} of cluster: {:?}", q.got.len(), q.got))
-                    }
+                    RaftError::APIError(CheckIsLeaderError::QuorumNotEnough(q)) => Some(format!(
+                        ", acked by {} of cluster: {:?}",
+                        q.got.len(),
+                        q.got
+                    )),
                     _ => None,
                 })
                 .unwrap_or_default();
