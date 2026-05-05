@@ -1888,7 +1888,7 @@ mod tests {
 
         let local_secret_key = secret_key(0x44);
         config.network_config.enabled = true;
-        config.network_config.secret_key = Some(local_secret_key.clone());
+        config.network_config.secret_key = Some(local_secret_key);
         config.consensus_config.peer_ids = vec![peer_id(&secret_key(0x55))];
 
         let err = config.validate().await.unwrap_err().to_string();
@@ -1909,7 +1909,7 @@ mod tests {
         config.general_config.main_node_rpc_url = Some("http://127.0.0.1:3050".into());
         config.network_config.enabled = true;
         let local_secret_key = secret_key(0x44);
-        config.network_config.secret_key = Some(local_secret_key.clone());
+        config.network_config.secret_key = Some(local_secret_key);
         config.consensus_config.enabled = true;
         config.consensus_config.peer_ids = vec![peer_id(&local_secret_key)];
         config.genesis_config.bridgehub_address = None;
@@ -1932,7 +1932,7 @@ mod tests {
         let mut config = base_config(NodeRole::MainNode);
         let local_secret_key = secret_key(0x44);
         config.network_config.enabled = true;
-        config.network_config.secret_key = Some(local_secret_key.clone());
+        config.network_config.secret_key = Some(local_secret_key);
         config.consensus_config.enabled = true;
         config.consensus_config.peer_ids = vec![peer_id(&local_secret_key)];
         config.sequencer_config.block_rebuild = Some(RebuildBlocksConfig {
