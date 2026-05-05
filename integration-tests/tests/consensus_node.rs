@@ -99,92 +99,6 @@ async fn wait_for_l2_block(
     Ok(())
 }
 
-async fn wait_for_raft_leader_among(
-    cluster: &MultiNodeTester,
-    node_indices: &[usize],
-    timeout: Duration,
-) -> anyhow::Result<usize> {
-    let deadline = Instant::now() + timeout;
-    let mut last_summary = String::new();
-
-    while Instant::now() < deadline {
-        let mut statuses = Vec::with_capacity(node_indices.len());
-        let mut errors = Vec::new();
-
-        for &index in node_indices {
-            match raft_status(cluster, index).await {
-                Ok(status) => statuses.push((index, status)),
-                Err(error) => errors.push(format!("node_{index}: {error:#}")),
-            }
-        }
-
-        let summary = {
-            let leaders = statuses
-                .iter()
-                .filter_map(|(index, status)| {
-                    status
-                        .consensus
-                        .raft
-                        .as_ref()
-                        .filter(|raft| raft.is_leader)
-                        .map(|raft| format!("node_{index}:{}", raft.node_id))
-                })
-                .collect::<Vec<_>>();
-            let leader_views = statuses
-                .iter()
-                .filter_map(|(index, status)| {
-                    status
-                        .consensus
-                        .raft
-                        .as_ref()?
-                        .current_leader
-                        .as_ref()
-                        .map(|leader| format!("node_{index}:{leader}"))
-                })
-                .collect::<Vec<_>>();
-            format!(
-                "statuses={} errors=[{}] leaders=[{}] views=[{}]",
-                statuses.len(),
-                errors.join(", "),
-                leaders.join(", "),
-                leader_views.join(", ")
-            )
-        };
-        if summary != last_summary {
-            tracing::info!("raft quorum leader check: {summary}");
-            last_summary = summary;
-        }
-
-        if statuses.len() == node_indices.len()
-            && statuses.iter().all(|(_, status)| status.healthy)
-            && let Some(agreed_leader) = statuses
-                .first()
-                .and_then(|(_, status)| status.consensus.raft.as_ref()?.current_leader.clone())
-            && statuses.iter().all(|(_, status)| {
-                status
-                    .consensus
-                    .raft
-                    .as_ref()
-                    .and_then(|raft| raft.current_leader.as_deref())
-                    == Some(agreed_leader.as_str())
-            })
-            && let Some((leader_index, _)) = statuses.iter().find(|(_, status)| {
-                status
-                    .consensus
-                    .raft
-                    .as_ref()
-                    .is_some_and(|raft| raft.is_leader && raft.node_id == agreed_leader)
-            })
-        {
-            return Ok(*leader_index);
-        }
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-
-    anyhow::bail!("timed out waiting for raft leader among {node_indices:?}: {last_summary}")
-}
-
 async fn send_transfer_and_wait_for_l2_blocks(
     cluster: &MultiNodeTester,
     leader_index: usize,
@@ -245,8 +159,9 @@ async fn generate_consensus_transaction_storm(
     let mut last_error = None;
 
     while Instant::now() < deadline {
-        let leader_index =
-            wait_for_raft_leader_among(cluster, node_indices, CLUSTER_FORMATION_TIMEOUT).await?;
+        let leader_index = cluster
+            .wait_for_raft_cluster_formation_among(node_indices, CLUSTER_FORMATION_TIMEOUT)
+            .await?;
         let Some(send_timeout) = remaining_storm_send_timeout(deadline) else {
             break;
         };
@@ -413,9 +328,9 @@ async fn generate_consensus_transaction_storm_across_restart(
             .await;
         }
 
-        let leader_index =
-            wait_for_raft_leader_among(cluster, active_node_indices, CLUSTER_FORMATION_TIMEOUT)
-                .await?;
+        let leader_index = cluster
+            .wait_for_raft_cluster_formation_among(active_node_indices, CLUSTER_FORMATION_TIMEOUT)
+            .await?;
         let Some(send_timeout) = remaining_storm_send_timeout(stop_deadline) else {
             break;
         };

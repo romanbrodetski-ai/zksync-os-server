@@ -34,32 +34,29 @@ pub struct ClusterState {
 }
 
 impl ClusterState {
-    /// Collects status from all nodes in parallel
-    async fn collect(nodes: &[NodeSlot]) -> Self {
+    /// Collects status from all non-suspended nodes in parallel.
+    async fn collect_active(nodes: &[NodeSlot]) -> Self {
+        let node_indices = nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, node)| node.running().is_some().then_some(idx));
+        Self::collect_indices(nodes, node_indices).await
+    }
+
+    /// Collects status from the selected node indices in parallel.
+    async fn collect_indices(
+        nodes: &[NodeSlot],
+        node_indices: impl IntoIterator<Item = usize>,
+    ) -> Self {
         let node_states =
-            futures::future::join_all(nodes.iter().enumerate().map(|(idx, node)| async move {
-                let status = match node {
-                    NodeSlot::Running(node) => node.status().await.map_err(|e| e.to_string()),
-                    NodeSlot::Suspended(_) => Err("node is suspended".to_string()),
+            futures::future::join_all(node_indices.into_iter().map(|idx| async move {
+                let status = match nodes.get(idx) {
+                    Some(NodeSlot::Running(node)) => node.status().await.map_err(|e| e.to_string()),
+                    Some(NodeSlot::Suspended(_)) => Err("node is suspended".to_string()),
+                    None => Err("node index out of range".to_string()),
                 };
                 (idx, status)
             }))
-            .await;
-        Self { nodes: node_states }
-    }
-
-    /// Collects status from all non-suspended nodes in parallel.
-    async fn collect_active(nodes: &[NodeSlot]) -> Self {
-        let node_states =
-            futures::future::join_all(
-                nodes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, node)| node.running().map(|tester| (idx, tester)))
-                    .map(|(idx, node)| async move {
-                        (idx, node.status().await.map_err(|e| e.to_string()))
-                    }),
-            )
             .await;
         Self { nodes: node_states }
     }
@@ -181,11 +178,8 @@ impl ClusterState {
             let leader_info: Vec<_> = leader_indices
                 .iter()
                 .filter_map(|&idx| {
-                    self.nodes[idx]
-                        .1
-                        .as_ref()
-                        .ok()
-                        .and_then(|s| s.consensus.raft.as_ref())
+                    self.status_for_index(idx)
+                        .and_then(|status| status.consensus.raft.as_ref())
                         .map(|r| format!("node_{} (id={})", idx, r.node_id))
                 })
                 .collect();
@@ -328,6 +322,18 @@ impl MultiNodeTester {
         self.nodes.is_empty()
     }
 
+    fn all_node_indices(&self) -> Vec<usize> {
+        (0..self.nodes.len()).collect()
+    }
+
+    fn active_node_indices(&self) -> Vec<usize> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, node)| node.running().is_some().then_some(idx))
+            .collect()
+    }
+
     /// Shuts down all active nodes and drops suspended ones.
     pub async fn shutdown_all(self) -> anyhow::Result<()> {
         for node in self.nodes {
@@ -397,7 +403,8 @@ impl MultiNodeTester {
         &self,
         timeout: Duration,
     ) -> anyhow::Result<usize> {
-        self.wait_for_raft_cluster_formation_inner(timeout, false)
+        let node_indices = self.all_node_indices();
+        self.wait_for_raft_cluster_formation_among(&node_indices, timeout)
             .await
     }
 
@@ -406,7 +413,18 @@ impl MultiNodeTester {
         &self,
         timeout: Duration,
     ) -> anyhow::Result<usize> {
-        self.wait_for_raft_cluster_formation_inner(timeout, true)
+        let node_indices = self.active_node_indices();
+        self.wait_for_raft_cluster_formation_among(&node_indices, timeout)
+            .await
+    }
+
+    /// Same as `wait_for_raft_cluster_formation`, but only considers selected nodes.
+    pub async fn wait_for_raft_cluster_formation_among(
+        &self,
+        node_indices: &[usize],
+        timeout: Duration,
+    ) -> anyhow::Result<usize> {
+        self.wait_for_raft_cluster_formation_inner(node_indices, timeout)
             .await
     }
 
@@ -455,23 +473,32 @@ impl MultiNodeTester {
 
     async fn wait_for_raft_cluster_formation_inner(
         &self,
+        node_indices: &[usize],
         timeout: Duration,
-        active_only: bool,
     ) -> anyhow::Result<usize> {
+        anyhow::ensure!(
+            !node_indices.is_empty(),
+            "cannot wait for raft cluster formation among an empty node set"
+        );
+        for &index in node_indices {
+            anyhow::ensure!(
+                index < self.nodes.len(),
+                "node index {index} is out of range for cluster with {} nodes",
+                self.nodes.len()
+            );
+        }
+
         let deadline = Instant::now() + timeout;
         let mut last_summary = String::new();
 
         while Instant::now() < deadline {
-            let cluster_state = if active_only {
-                ClusterState::collect_active(&self.nodes).await
-            } else {
-                ClusterState::collect(&self.nodes).await
-            };
+            let cluster_state =
+                ClusterState::collect_indices(&self.nodes, node_indices.iter().copied()).await;
             let summary = cluster_state.summary();
 
             if summary != last_summary {
                 tracing::info!(
-                    "raft cluster formation check (active_only={active_only}): {summary}"
+                    "raft cluster formation check (node_indices={node_indices:?}): {summary}"
                 );
                 last_summary = summary;
             }
@@ -479,10 +506,12 @@ impl MultiNodeTester {
             if cluster_state.is_formed() {
                 let leader_index = cluster_state.leader_indices()[0];
                 tracing::info!(
-                    "raft cluster formed (active_only={active_only}): leader_index={leader_index}"
+                    "raft cluster formed (node_indices={node_indices:?}): leader_index={leader_index}"
                 );
-                for node in self.nodes.iter().filter_map(NodeSlot::running) {
-                    node.wait_for_initial_deposit().await?;
+                for &index in node_indices {
+                    if let Some(node) = self.nodes.get(index).and_then(NodeSlot::running) {
+                        node.wait_for_initial_deposit().await?;
+                    }
                 }
                 return Ok(leader_index);
             }
@@ -490,20 +519,17 @@ impl MultiNodeTester {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        let final_state = if active_only {
-            ClusterState::collect_active(&self.nodes).await
-        } else {
-            ClusterState::collect(&self.nodes).await
-        };
+        let final_state =
+            ClusterState::collect_indices(&self.nodes, node_indices.iter().copied()).await;
 
         tracing::error!(
-            "failed to form raft cluster (active_only={active_only}): reason={}, statuses={:?}",
+            "failed to form raft cluster (node_indices={node_indices:?}): reason={}, statuses={:?}",
             final_state.failure_reason(),
             final_state.nodes
         );
 
         anyhow::bail!(
-            "timed out waiting for raft cluster formation: {}",
+            "timed out waiting for raft cluster formation among {node_indices:?}: {}",
             final_state.failure_reason()
         )
     }
