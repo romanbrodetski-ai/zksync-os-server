@@ -450,26 +450,11 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         loopback_consensus()
     };
     let (raft_protocol_handler, raft_bootstrapper, raft_status_rx) = match raft {
-        Some(raft) => {
-            // OpenRaft spawns its core task with plain tokio::spawn, outside of reth_tasks.
-            // Register an explicit shutdown task so that graceful_shutdown_with_timeout waits
-            // for the RaftCore to finish — releasing its RocksDB handles — before returning.
-            let handle = raft.handle;
-            runtime.spawn_critical_with_graceful_shutdown_signal(
-                "raft-shutdown",
-                |shutdown| async move {
-                    let _ = shutdown.await;
-                    if let Err(e) = handle.shutdown().await {
-                        tracing::warn!(%e, "raft shutdown error");
-                    }
-                },
-            );
-            (
-                Some(raft.protocol_handler),
-                raft.bootstrapper,
-                Some(raft.status_rx),
-            )
-        }
+        Some(raft) => (
+            Some(raft.protocol_handler),
+            raft.bootstrapper,
+            Some(raft.status_rx),
+        ),
         None => (None, None, None),
     };
     if config.network_config.enabled {

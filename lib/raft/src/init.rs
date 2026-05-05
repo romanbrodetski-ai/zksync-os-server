@@ -119,9 +119,20 @@ pub async fn init_consensus(
         None
     };
 
+    // OpenRaft spawns its core task with plain tokio::spawn, outside of reth_tasks.
+    // Register an explicit shutdown task so that graceful_shutdown_with_timeout waits
+    // for the RaftCore to finish — releasing its RocksDB handles — before returning.
+    let shutdown_handle = raft.clone();
+    runtime.spawn_critical_with_graceful_shutdown_signal("raft-shutdown", |shutdown| async move {
+        let _ = shutdown.await;
+        if let Err(e) = shutdown_handle.shutdown().await {
+            tracing::warn!(%e, "raft shutdown error");
+        }
+    });
+
     Ok(ConsensusRuntimeParts {
         canonization_engine: BlockCanonizationEngine::OpenRaft(OpenRaftCanonizationEngine {
-            raft: raft.clone(),
+            raft,
             canonized_blocks_rx: canonized_rx,
         }),
         leadership: LeadershipSignal::Watch(leader_rx),
@@ -129,7 +140,6 @@ pub async fn init_consensus(
             protocol_handler,
             bootstrapper,
             status_rx,
-            handle: raft,
         }),
     })
 }
