@@ -83,6 +83,13 @@ impl<Ok> ToRpcResult<Ok, EthSendRawTransactionError> for Result<Ok, EthSendRawTr
             EthSendRawTransactionError::NotAcceptingTransactions(_) => {
                 internal_rpc_err(err.to_string())
             }
+            EthSendRawTransactionError::ConsensusForwardError(ref consensus_err) => {
+                if let crate::tx_handler::ConsensusForwardError::Rpc(rpc_err) = consensus_err {
+                    forward_error_to_rpc_err(rpc_err, &err)
+                } else {
+                    internal_rpc_err(err.to_string())
+                }
+            }
             EthSendRawTransactionError::ForwardError(ref rpc_err) => {
                 forward_error_to_rpc_err(rpc_err, &err)
             }
