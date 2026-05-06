@@ -576,6 +576,22 @@ pub struct ConsensusConfig {
         "must include local peer id derived from `network.secret_key`"
     ))]
     pub peer_ids: Vec<PeerId>,
+    /// RPC endpoints for consensus participants, keyed by their Raft peer IDs.
+    /// Used by followers to forward transactions to the locally known leader.
+    #[config(default, with = Serde![*])]
+    #[config_validate(custom(
+        |root: &Config, value: &Vec<ConsensusRpcForwarderConfig>| {
+            !root.consensus_config.enabled
+                || root.consensus_config.peer_ids.len() <= 1
+                || root
+                    .consensus_config
+                    .peer_ids
+                    .iter()
+                    .all(|peer_id| value.iter().any(|entry| entry.peer_id == *peer_id))
+        },
+        "must include every `consensus.peer_ids` entry when multi-node consensus is enabled"
+    ))]
+    pub tx_forwarding_rpc_urls: Vec<ConsensusRpcForwarderConfig>,
     /// WARNING: Assumes all configured consensus nodes are already caught up to the same
     /// canonical L2 state. Bootstrap does not catch up stale nodes before admitting them
     /// to the cluster.
@@ -592,6 +608,12 @@ pub struct ConsensusConfig {
     /// Raft heartbeat interval.
     #[config(default_t = Duration::from_millis(1000))]
     pub heartbeat_interval: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsensusRpcForwarderConfig {
+    pub peer_id: PeerId,
+    pub rpc_url: String,
 }
 
 impl ConsensusConfig {
@@ -1903,6 +1925,16 @@ mod tests {
             .consensus_config
             .peer_ids
             .push(peer_id(&local_secret_key));
+        config.consensus_config.tx_forwarding_rpc_urls = config
+            .consensus_config
+            .peer_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, peer_id)| ConsensusRpcForwarderConfig {
+                peer_id: *peer_id,
+                rpc_url: format!("http://127.0.0.1:{}", 3050 + idx),
+            })
+            .collect();
         config.validate().await.unwrap();
     }
 

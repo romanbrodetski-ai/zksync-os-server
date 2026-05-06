@@ -23,6 +23,7 @@ mod monitoring_middleware;
 mod net_impl;
 mod sandbox;
 mod tx_handler;
+pub use tx_handler::{ConsensusLeaderState, ConsensusTxForwarder};
 mod txpool_impl;
 mod types;
 mod unstable_impl;
@@ -77,6 +78,7 @@ pub async fn spawn<RpcStorage: ReadRpcStorage, Mempool: L2Subpool>(
     acceptance_state: watch::Receiver<TransactionAcceptanceState>,
     last_constructed_block_context: watch::Receiver<Option<BlockContext>>,
     tx_forwarder: Option<DynProvider>,
+    consensus_tx_forwarder: Option<ConsensusTxForwarder>,
     gateway_provider: Option<DynProvider>,
     runtime: &Runtime,
     wait_for_db: impl Future<Output = ()> + Send + 'static,
@@ -100,6 +102,7 @@ pub async fn spawn<RpcStorage: ReadRpcStorage, Mempool: L2Subpool>(
             chain_id,
             acceptance_state,
             tx_forwarder,
+            consensus_tx_forwarder,
         )
         .into_rpc(),
     )?;

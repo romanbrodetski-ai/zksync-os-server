@@ -48,6 +48,7 @@ use jsonrpsee::http_client::HttpClient;
 use priority_tree_pipeline_step::PriorityTreePipelineStep;
 use reth_tasks::Runtime;
 use ruint::aliases::U256;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -100,7 +101,7 @@ use zksync_os_raft::{
 };
 use zksync_os_reth_compat::provider::ZkProviderFactory;
 use zksync_os_revm_consistency_checker::node::RevmConsistencyChecker;
-use zksync_os_rpc::{EthCallHandler, RpcStorage};
+use zksync_os_rpc::{ConsensusLeaderState, ConsensusTxForwarder, EthCallHandler, RpcStorage};
 use zksync_os_rpc_api::eth::EthApiClient;
 use zksync_os_sequencer::execution::block_context_provider::BlockContextProvider;
 use zksync_os_sequencer::execution::{
@@ -749,6 +750,59 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         None
     };
 
+    let consensus_tx_forwarder = if config.consensus_config.enabled {
+        let node_id = config
+            .network_config
+            .derived_peer_id()
+            .expect("failed to derive local consensus peer id")
+            .to_string();
+        let mut providers = HashMap::new();
+        for target in &config.consensus_config.tx_forwarding_rpc_urls {
+            let provider = ProviderBuilder::new()
+                .connect(&target.rpc_url)
+                .await
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "could not connect to consensus RPC {} for peer {}: {err}",
+                        target.rpc_url, target.peer_id
+                    )
+                })
+                .erased();
+            providers.insert(target.peer_id.to_string(), provider);
+        }
+
+        let mut raft_status_rx = raft_status_rx
+            .clone()
+            .expect("consensus status receiver must be present when consensus is enabled");
+        let (leader_state_tx, leader_state_rx) = watch::channel(ConsensusLeaderState::default());
+        runtime.spawn_critical_task("consensus tx leader tracker", async move {
+            loop {
+                let leader_state = raft_status_rx
+                    .borrow()
+                    .as_ref()
+                    .map(|status| ConsensusLeaderState {
+                        is_leader: status.is_leader,
+                        current_leader: status.current_leader.clone(),
+                    })
+                    .unwrap_or_default();
+                if leader_state_tx.send(leader_state).is_err() {
+                    break;
+                }
+                if raft_status_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Some(ConsensusTxForwarder::new(
+            node_id,
+            leader_state_rx,
+            providers,
+        ))
+    } else {
+        None
+    };
+
     let (last_constructed_block_ctx_sender, last_constructed_block_ctx_receiver) =
         watch::channel(None);
 
@@ -1060,6 +1114,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         tx_acceptance_state_receiver,
         last_constructed_block_ctx_receiver,
         main_node_provider,
+        consensus_tx_forwarder,
         gateway_provider.map(|p| p.erased()),
         runtime,
         wait_for_db,
