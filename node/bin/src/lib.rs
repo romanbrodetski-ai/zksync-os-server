@@ -50,6 +50,7 @@ use reth_tasks::Runtime;
 use ruint::aliases::U256;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
@@ -91,6 +92,7 @@ use zksync_os_network::protocol::{
     ZksProtocolConfig,
 };
 use zksync_os_network::service::{NetworkService, PeerVerifyBatch, PeerVerifyBatchResult};
+use zksync_os_network::{PeerForwardedRawTransaction, TxForwardHandle};
 use zksync_os_observability::GENERAL_METRICS;
 use zksync_os_pipeline::Pipeline;
 use zksync_os_priority_tree::PriorityTreeManager;
@@ -100,7 +102,7 @@ use zksync_os_raft::{
 };
 use zksync_os_reth_compat::provider::ZkProviderFactory;
 use zksync_os_revm_consistency_checker::node::RevmConsistencyChecker;
-use zksync_os_rpc::{EthCallHandler, RpcStorage};
+use zksync_os_rpc::{ConsensusLeaderState, ConsensusTxForwarder, EthCallHandler, RpcStorage};
 use zksync_os_rpc_api::eth::EthApiClient;
 use zksync_os_sequencer::execution::block_context_provider::BlockContextProvider;
 use zksync_os_sequencer::execution::{
@@ -425,6 +427,11 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let (verify_batch_tx, verify_batch_rx) = tokio::sync::mpsc::channel::<PeerVerifyBatch>(128);
     let (outgoing_verify_results, _) =
         tokio::sync::broadcast::channel::<PeerVerifyBatchResult>(128);
+    let (forwarded_tx_tx, forwarded_tx_rx) =
+        tokio::sync::mpsc::channel::<PeerForwardedRawTransaction>(128);
+    let forwarded_tx_rx =
+        (node_role.is_main() && config.network_config.enabled).then_some(forwarded_tx_rx);
+    let mut tx_forward_handle: Option<TxForwardHandle> = None;
 
     let ConsensusRuntimeParts {
         canonization_engine,
@@ -469,6 +476,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
                 ZksProtocolConfig::MainNode(MainNodeProtocolConfig {
                     accepted_verifier_signers,
                     verify_result_tx: verify_result_tx.clone(),
+                    forwarded_tx_tx: Some(forwarded_tx_tx.clone()),
                 }),
                 block_replay_storage.clone(),
                 zk_provider_factory,
@@ -509,6 +517,9 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             .await
         }
         .expect("failed to create network service");
+        if node_role.is_main() {
+            tx_forward_handle = Some(network_service.tx_forward_handle());
+        }
         network_service.spawn(runtime, node_role.is_main().then_some(verify_request_rx));
         if let Some(bootstrapper) = raft_bootstrapper {
             bootstrapper
@@ -747,6 +758,61 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         )
     } else {
         None
+    };
+
+    let consensus_tx_forwarder = match (
+        config.consensus_config.enabled,
+        tx_forward_handle.clone(),
+        raft_status_rx.clone(),
+    ) {
+        (true, Some(tx_forward), Some(mut raft_status_rx)) => {
+            let node_id = config
+                .network_config
+                .derived_peer_id()
+                .expect("failed to derive local consensus peer id");
+            let (leader_state_tx, leader_state_rx) =
+                watch::channel(ConsensusLeaderState::default());
+            runtime.spawn_critical_task("consensus tx leader tracker", async move {
+                loop {
+                    let leader_state = raft_status_rx
+                        .borrow()
+                        .as_ref()
+                        .map(|status| {
+                            let current_leader =
+                                status.current_leader.as_deref().and_then(|leader| {
+                                    match zksync_os_network::PeerId::from_str(leader) {
+                                        Ok(peer_id) => Some(peer_id),
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                %leader,
+                                                %error,
+                                                "failed to parse consensus leader peer id"
+                                            );
+                                            None
+                                        }
+                                    }
+                                });
+                            ConsensusLeaderState {
+                                is_leader: status.is_leader,
+                                current_leader,
+                            }
+                        })
+                        .unwrap_or_default();
+                    if leader_state_tx.send(leader_state).is_err() {
+                        break;
+                    }
+                    if raft_status_rx.changed().await.is_err() {
+                        break;
+                    }
+                }
+            });
+            Some(ConsensusTxForwarder::new(
+                node_id,
+                leader_state_rx,
+                tx_forward,
+            ))
+        }
+        _ => None,
     };
 
     let (last_constructed_block_ctx_sender, last_constructed_block_ctx_receiver) =
@@ -1060,6 +1126,8 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         tx_acceptance_state_receiver,
         last_constructed_block_ctx_receiver,
         main_node_provider,
+        consensus_tx_forwarder,
+        forwarded_tx_rx,
         gateway_provider.map(|p| p.erased()),
         runtime,
         wait_for_db,

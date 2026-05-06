@@ -2,15 +2,17 @@ use super::MAX_BLOCKS_PER_MESSAGE;
 use super::ProtocolEvent;
 use super::config::MainNodeProtocolConfig;
 use crate::service::PeerVerifyBatchResult;
+use crate::tx_forward::{PeerForwardedRawTransaction, TxForwardHandle};
 use crate::version::ZksProtocolVersionSpec;
 use crate::wire::auth::recover_verifier_signer;
 use crate::wire::message::ZksMessage;
+use crate::wire::transactions::{ForwardRawTransaction, ForwardRawTransactionResult};
 use alloy::primitives::B256;
 use alloy::primitives::bytes::BytesMut;
 use futures::{FutureExt, Stream, StreamExt};
 use reth_network_peers::PeerId;
 use std::collections::HashMap;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use zksync_os_storage_api::{ReadReplay, ReadReplayExt};
 
 /// Background task that drives a main-node side of a connection.
@@ -24,10 +26,12 @@ pub(super) async fn run_mn_connection<P: ZksProtocolVersionSpec, Replay: ReadRep
     peer_id: PeerId,
     replay: Replay,
     config: MainNodeProtocolConfig,
+    tx_forward: TxForwardHandle,
 ) {
     let MainNodeProtocolConfig {
         accepted_verifier_signers,
         verify_result_tx,
+        forwarded_tx_tx,
     } = config;
     let mut pending_verifier_nonce: Option<B256> = None;
     // Receive the single GetBlockReplays request for this connection. On zks/3, verifier ENs may
@@ -83,6 +87,17 @@ pub(super) async fn run_mn_connection<P: ZksProtocolVersionSpec, Replay: ReadRep
                 }
             }
             Some(ZksMessage::GetBlockReplays(request)) => break request,
+            Some(ZksMessage::ForwardRawTransaction(request)) => {
+                handle_forward_raw_transaction::<P>(
+                    peer_id,
+                    request,
+                    forwarded_tx_tx.clone(),
+                    outbound_tx.clone(),
+                );
+            }
+            Some(ZksMessage::ForwardRawTransactionResult(result)) => {
+                tx_forward.complete_response(result);
+            }
             Some(msg) => {
                 tracing::info!(
                     ?msg,
@@ -128,6 +143,17 @@ pub(super) async fn run_mn_connection<P: ZksProtocolVersionSpec, Replay: ReadRep
                             tracing::info!("verify result channel is closed; terminating");
                             return;
                         }
+                    }
+                    Some(ZksMessage::ForwardRawTransaction(request)) => {
+                        handle_forward_raw_transaction::<P>(
+                            peer_id,
+                            request,
+                            forwarded_tx_tx.clone(),
+                            outbound_tx.clone(),
+                        );
+                    }
+                    Some(ZksMessage::ForwardRawTransactionResult(result)) => {
+                        tx_forward.complete_response(result);
                     }
                     Some(msg) => {
                         tracing::info!(?msg, "received unexpected message from peer; terminating");
@@ -180,4 +206,47 @@ pub(super) async fn run_mn_connection<P: ZksProtocolVersionSpec, Replay: ReadRep
             }
         }
     }
+}
+
+fn handle_forward_raw_transaction<P: ZksProtocolVersionSpec>(
+    peer_id: PeerId,
+    request: ForwardRawTransaction,
+    forwarded_tx_tx: Option<mpsc::Sender<PeerForwardedRawTransaction>>,
+    outbound_tx: mpsc::Sender<BytesMut>,
+) {
+    tokio::spawn(async move {
+        let result = match forwarded_tx_tx {
+            Some(forwarded_tx_tx) => {
+                let (response_tx, response_rx) = oneshot::channel();
+                let forwarded = PeerForwardedRawTransaction {
+                    peer_id,
+                    tx: request.tx,
+                    response_tx,
+                };
+                if forwarded_tx_tx.send(forwarded).await.is_err() {
+                    Err("forwarded transaction receiver is closed".to_owned())
+                } else {
+                    response_rx.await.unwrap_or_else(|_| {
+                        Err("forwarded transaction response dropped".to_owned())
+                    })
+                }
+            }
+            None => Err("transaction forwarding is not configured".to_owned()),
+        };
+
+        let response = match result {
+            Ok(()) => ForwardRawTransactionResult::accepted(request.request_id),
+            Err(error) => ForwardRawTransactionResult::rejected(request.request_id, error),
+        };
+        if outbound_tx
+            .send(ZksMessage::<P>::ForwardRawTransactionResult(response).encoded())
+            .await
+            .is_err()
+        {
+            tracing::debug!(
+                request_id = request.request_id,
+                "failed to send forwarded transaction response"
+            );
+        }
+    });
 }

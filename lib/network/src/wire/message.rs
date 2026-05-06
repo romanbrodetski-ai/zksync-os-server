@@ -5,6 +5,7 @@ use crate::wire::{
     BlockReplays, GetBlockReplays,
     auth::{VerifierAuth, VerifierChallenge, VerifierRoleRequest},
     replays::RecordOverride,
+    transactions::{ForwardRawTransaction, ForwardRawTransactionResult},
     verification::{VerifyBatch, VerifyBatchResult},
 };
 use alloy::primitives::{
@@ -43,6 +44,10 @@ pub enum ZksMessage<P: ZksProtocolVersionSpec> {
     VerifyBatch(VerifyBatch),
     /// External-node verifier responds to a [`VerifyBatch`] request with approval or refusal.
     VerifyBatchResult(VerifyBatchResult),
+    /// Consensus node forwards a raw transaction to the current leader.
+    ForwardRawTransaction(ForwardRawTransaction),
+    /// Current leader reports whether it accepted a forwarded raw transaction.
+    ForwardRawTransactionResult(ForwardRawTransactionResult),
 }
 
 impl<P: ZksProtocolVersionSpec> ZksMessage<P> {
@@ -66,6 +71,8 @@ impl<P: ZksProtocolVersionSpec> ZksMessage<P> {
             ZksMessage::VerifierAuth(_) => ZksMessageId::VerifierAuth,
             ZksMessage::VerifyBatch(_) => ZksMessageId::VerifyBatch,
             ZksMessage::VerifyBatchResult(_) => ZksMessageId::VerifyBatchResult,
+            ZksMessage::ForwardRawTransaction(_) => ZksMessageId::ForwardRawTransaction,
+            ZksMessage::ForwardRawTransactionResult(_) => ZksMessageId::ForwardRawTransactionResult,
         }
     }
 
@@ -120,6 +127,12 @@ impl<P: ZksProtocolVersionSpec> ZksMessage<P> {
             ZksMessageId::VerifyBatchResult => {
                 Self::VerifyBatchResult(VerifyBatchResult::decode(buf)?)
             }
+            ZksMessageId::ForwardRawTransaction => {
+                Self::ForwardRawTransaction(ForwardRawTransaction::decode(buf)?)
+            }
+            ZksMessageId::ForwardRawTransactionResult => {
+                Self::ForwardRawTransactionResult(ForwardRawTransactionResult::decode(buf)?)
+            }
         })
     }
 }
@@ -135,6 +148,8 @@ impl<P: ZksProtocolVersionSpec> Encodable for ZksMessage<P> {
             ZksMessage::VerifierAuth(message) => message.encode(out),
             ZksMessage::VerifyBatch(message) => message.encode(out),
             ZksMessage::VerifyBatchResult(message) => message.encode(out),
+            ZksMessage::ForwardRawTransaction(message) => message.encode(out),
+            ZksMessage::ForwardRawTransactionResult(message) => message.encode(out),
         }
     }
 
@@ -148,6 +163,8 @@ impl<P: ZksProtocolVersionSpec> Encodable for ZksMessage<P> {
                 ZksMessage::VerifierAuth(message) => message.length(),
                 ZksMessage::VerifyBatch(message) => message.length(),
                 ZksMessage::VerifyBatchResult(message) => message.length(),
+                ZksMessage::ForwardRawTransaction(message) => message.length(),
+                ZksMessage::ForwardRawTransactionResult(message) => message.length(),
             }
     }
 }
@@ -170,6 +187,10 @@ pub enum ZksMessageId {
     VerifyBatch = 0x05,
     /// Batch verification response.
     VerifyBatchResult = 0x06,
+    /// Forward raw transaction request.
+    ForwardRawTransaction = 0x07,
+    /// Forward raw transaction response.
+    ForwardRawTransactionResult = 0x08,
 }
 
 impl ZksMessageId {
@@ -209,6 +230,8 @@ impl TryFrom<u8> for ZksMessageId {
             0x04 => Ok(Self::VerifierAuth),
             0x05 => Ok(Self::VerifyBatch),
             0x06 => Ok(Self::VerifyBatchResult),
+            0x07 => Ok(Self::ForwardRawTransaction),
+            0x08 => Ok(Self::ForwardRawTransactionResult),
             _ => Err("unrecognized zks message id"),
         }
     }
@@ -217,8 +240,9 @@ impl TryFrom<u8> for ZksMessageId {
 #[cfg(test)]
 mod tests {
     use super::ZksMessage;
-    use crate::version::{ZksProtocolV1, ZksProtocolV2, ZksProtocolV3};
+    use crate::version::{ZksProtocolV1, ZksProtocolV2, ZksProtocolV3, ZksProtocolV5};
     use crate::wire::auth::{VerifierAuth, VerifierChallenge, VerifierRoleRequest};
+    use crate::wire::transactions::{ForwardRawTransaction, ForwardRawTransactionResult};
     use crate::wire::verification::{VerifyBatch, VerifyBatchOutcome, VerifyBatchResult};
     use alloy::primitives::{B256, Bytes};
 
@@ -269,6 +293,30 @@ mod tests {
             let encoded = message.encoded();
             let mut slice = encoded.as_ref();
             let decoded = ZksMessage::<ZksProtocolV3>::decode_message(&mut slice).unwrap();
+            assert_eq!(decoded.encoded(), encoded);
+            assert!(slice.is_empty());
+        }
+    }
+
+    #[test]
+    fn v5_round_trips_tx_forwarding_messages() {
+        let messages = [
+            ZksMessage::<ZksProtocolV5>::ForwardRawTransaction(ForwardRawTransaction {
+                request_id: 42,
+                tx: Bytes::from_static(b"raw-tx"),
+            }),
+            ZksMessage::<ZksProtocolV5>::ForwardRawTransactionResult(
+                ForwardRawTransactionResult::accepted(42),
+            ),
+            ZksMessage::<ZksProtocolV5>::ForwardRawTransactionResult(
+                ForwardRawTransactionResult::rejected(43, "not leader".to_owned()),
+            ),
+        ];
+
+        for message in messages {
+            let encoded = message.encoded();
+            let mut slice = encoded.as_ref();
+            let decoded = ZksMessage::<ZksProtocolV5>::decode_message(&mut slice).unwrap();
             assert_eq!(decoded.encoded(), encoded);
             assert!(slice.is_empty());
         }

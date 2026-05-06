@@ -83,6 +83,9 @@ impl<Ok> ToRpcResult<Ok, EthSendRawTransactionError> for Result<Ok, EthSendRawTr
             EthSendRawTransactionError::NotAcceptingTransactions(_) => {
                 internal_rpc_err(err.to_string())
             }
+            EthSendRawTransactionError::ConsensusForwardError(_) => {
+                internal_rpc_err(err.to_string())
+            }
             EthSendRawTransactionError::ForwardError(ref rpc_err) => {
                 forward_error_to_rpc_err(rpc_err, &err)
             }

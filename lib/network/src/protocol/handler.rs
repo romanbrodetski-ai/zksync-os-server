@@ -5,6 +5,7 @@ use super::events::PeerConnectionHandle;
 use super::handler_shared_state::HandlerSharedState;
 use super::mn::run_mn_connection;
 use super::{ConnectionRegistry, ProtocolEvent};
+use crate::tx_forward::TxForwardHandle;
 use crate::version::ZksProtocolVersionSpec;
 use crate::wire::message::{ZKS_PROTOCOL, ZksMessage};
 use futures::{Stream, StreamExt};
@@ -29,6 +30,7 @@ enum ProtocolRole<Replay> {
     MainNode {
         replay: Replay,
         config: MainNodeProtocolConfig,
+        tx_forward: TxForwardHandle,
     },
     ExternalNode(ExternalNodeProtocolConfig),
 }
@@ -59,9 +61,14 @@ impl<P: ZksProtocolVersionSpec, Replay: Clone> ZksProtocolHandler<P, Replay> {
         config: MainNodeProtocolConfig,
         state: HandlerSharedState,
         connection_registry: ConnectionRegistry,
+        tx_forward: TxForwardHandle,
     ) -> Self {
         Self {
-            role: ProtocolRole::MainNode { replay, config },
+            role: ProtocolRole::MainNode {
+                replay,
+                config,
+                tx_forward,
+            },
             state,
             connection_registry,
             _phantom: Default::default(),
@@ -197,7 +204,11 @@ impl<P: ZksProtocolVersionSpec, Replay: ReadReplay + Clone> ConnectionHandler
         let connection_registry = self.connection_registry.clone();
 
         let task = match self.role {
-            ProtocolRole::MainNode { replay, config } => tokio::spawn(
+            ProtocolRole::MainNode {
+                replay,
+                config,
+                tx_forward,
+            } => tokio::spawn(
                 run_mn_connection::<P, _>(
                     conn,
                     outbound_tx,
@@ -205,6 +216,7 @@ impl<P: ZksProtocolVersionSpec, Replay: ReadReplay + Clone> ConnectionHandler
                     peer_id,
                     replay,
                     config,
+                    tx_forward,
                 )
                 .instrument(tracing::info_span!("mn_connection", %peer_id)),
             ),

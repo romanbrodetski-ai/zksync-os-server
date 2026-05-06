@@ -277,6 +277,30 @@ async fn consensus_cluster_forms_with_three_nodes_and_replicates_blocks() -> any
 }
 
 #[test_log::test(tokio::test)]
+async fn consensus_cluster_accepts_transactions_from_any_node() -> anyhow::Result<()> {
+    let cluster = MultiNodeTester::builder()
+        .with_consensus_secret_keys(consensus_test_keys(3))
+        .build()
+        .await?;
+    let result = async {
+        cluster
+            .wait_for_raft_cluster_formation(CLUSTER_FORMATION_TIMEOUT)
+            .await?;
+
+        for node_index in 0..cluster.len() {
+            send_transfer_and_wait_for_active_replication(&cluster, node_index)
+                .await
+                .with_context(|| format!("transaction submitted to node {node_index} failed"))?;
+        }
+
+        Ok(())
+    }
+    .await;
+    let shutdown_result = cluster.shutdown_all().await;
+    result.and(shutdown_result)
+}
+
+#[test_log::test(tokio::test)]
 async fn consensus_cluster_rotates_leader_after_failure() -> anyhow::Result<()> {
     let mut cluster = MultiNodeTester::builder()
         .with_consensus_secret_keys(consensus_test_keys(3))
