@@ -18,12 +18,10 @@ use zksync_os_network::protocol::{
     MainNodeProtocolConfig, ProtocolEvent, ZksProtocolHandler,
 };
 use zksync_os_network::version::{
-    ZksProtocolV0, ZksProtocolV1, ZksProtocolV2, ZksProtocolV3, ZksProtocolV4, ZksProtocolV5,
+    ZksProtocolV0, ZksProtocolV1, ZksProtocolV2, ZksProtocolV3, ZksProtocolV4,
     ZksProtocolVersionSpec, ZksVersion,
 };
-use zksync_os_network::{
-    PeerVerifyBatchResult, TxForwardHandle, VerifyBatchOutcome, VerifyBatchResult,
-};
+use zksync_os_network::{PeerVerifyBatchResult, VerifyBatchOutcome, VerifyBatchResult};
 use zksync_os_storage_api::{ReadReplay, ReplayRecord};
 use zksync_os_types::{BlockStartCursors, NodeRole, ProtocolSemanticVersion};
 
@@ -196,11 +194,9 @@ where
                     MainNodeProtocolConfig {
                         accepted_verifier_signers: accepted_verifier_signers(),
                         verify_result_tx,
-                        forwarded_tx_tx: None,
                     },
                     state,
                     connection_registry.clone(),
-                    TxForwardHandle::empty(),
                 ),
                 Some(verify_result_rx),
             )
@@ -276,7 +272,6 @@ async fn send_replay_record_matching_version(version: ZksVersion) {
         ZksVersion::Zks2 => test_inner::<ZksProtocolV2>().await,
         ZksVersion::Zks3 => test_inner::<ZksProtocolV3>().await,
         ZksVersion::Zks4 => test_inner::<ZksProtocolV4>().await,
-        ZksVersion::Zks5 => test_inner::<ZksProtocolV5>().await,
     }
 }
 
@@ -767,7 +762,6 @@ async fn send_replay_record_different_versions(version: ZksVersion) {
         ZksVersion::Zks2 => test_inner::<ZksProtocolV2>().await,
         ZksVersion::Zks3 => test_inner::<ZksProtocolV3>().await,
         ZksVersion::Zks4 => test_inner::<ZksProtocolV4>().await,
-        ZksVersion::Zks5 => test_inner::<ZksProtocolV5>().await,
     }
 }
 

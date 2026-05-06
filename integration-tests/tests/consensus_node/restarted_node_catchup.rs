@@ -57,10 +57,10 @@ async fn wait_for_l2_block(
 
 async fn send_transfer_and_wait_for_l2_blocks(
     cluster: &MultiNodeTester,
-    submit_index: usize,
+    leader_index: usize,
     node_indices: &[usize],
 ) -> anyhow::Result<u64> {
-    let receipt = send_transfer(cluster, submit_index).await?;
+    let receipt = send_transfer(cluster, leader_index).await?;
     let block_number = receipt
         .block_number
         .context("transfer receipt did not include a block number")?;
@@ -91,14 +91,11 @@ async fn generate_consensus_transaction_storm(
     let mut attempts = 0;
     let mut blocks = Vec::new();
     let mut last_error = None;
-    let mut next_submit_index = 0;
 
     while Instant::now() < deadline {
-        let _leader_index = cluster
+        let leader_index = cluster
             .wait_for_raft_cluster_formation_among(node_indices, CLUSTER_FORMATION_TIMEOUT)
             .await?;
-        let submit_index = node_indices[next_submit_index % node_indices.len()];
-        next_submit_index += 1;
         let Some(send_timeout) = remaining_storm_send_timeout(deadline) else {
             break;
         };
@@ -106,7 +103,7 @@ async fn generate_consensus_transaction_storm(
 
         match tokio::time::timeout(
             send_timeout,
-            send_transfer_and_wait_for_l2_blocks(cluster, submit_index, node_indices),
+            send_transfer_and_wait_for_l2_blocks(cluster, leader_index, node_indices),
         )
         .await
         {
@@ -115,7 +112,6 @@ async fn generate_consensus_transaction_storm(
                     attempts,
                     produced_blocks = blocks.len() + 1,
                     block_number,
-                    submit_index,
                     elapsed_ms = started_at.elapsed().as_millis(),
                     "consensus transaction storm produced a block"
                 );
@@ -222,7 +218,6 @@ async fn generate_consensus_transaction_storm_across_restart(
     let mut l2_caught_up = None;
     let mut rpc_caught_up = None;
     let mut last_error = None;
-    let mut next_submit_index = 0;
 
     while Instant::now() < stop_deadline {
         if !restarted && Instant::now() >= restart_deadline {
@@ -274,11 +269,9 @@ async fn generate_consensus_transaction_storm_across_restart(
             .await;
         }
 
-        let _leader_index = cluster
+        let leader_index = cluster
             .wait_for_raft_cluster_formation_among(active_node_indices, CLUSTER_FORMATION_TIMEOUT)
             .await?;
-        let submit_index = active_node_indices[next_submit_index % active_node_indices.len()];
-        next_submit_index += 1;
         let Some(send_timeout) = remaining_storm_send_timeout(stop_deadline) else {
             break;
         };
@@ -286,7 +279,7 @@ async fn generate_consensus_transaction_storm_across_restart(
 
         match tokio::time::timeout(
             send_timeout,
-            send_transfer_and_wait_for_l2_blocks(cluster, submit_index, active_node_indices),
+            send_transfer_and_wait_for_l2_blocks(cluster, leader_index, active_node_indices),
         )
         .await
         {
@@ -302,7 +295,6 @@ async fn generate_consensus_transaction_storm_across_restart(
                     blocks_before_restart,
                     blocks_after_restart,
                     block_number,
-                    submit_index,
                     elapsed_ms = started_at.elapsed().as_millis(),
                     "continuous consensus transaction storm produced a block"
                 );

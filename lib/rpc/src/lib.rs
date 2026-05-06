@@ -4,7 +4,7 @@ mod config;
 
 pub use config::RpcConfig;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 
 mod eth_call_handler;
 pub use eth_call_handler::EthCallHandler;
@@ -23,7 +23,6 @@ mod monitoring_middleware;
 mod net_impl;
 mod sandbox;
 mod tx_handler;
-pub use tx_handler::{ConsensusLeaderState, ConsensusTxForwarder};
 mod txpool_impl;
 mod types;
 mod unstable_impl;
@@ -54,7 +53,6 @@ use tower_http::cors::{Any, CorsLayer};
 use zksync_os_genesis::GenesisInputSource;
 use zksync_os_interface::types::BlockContext;
 use zksync_os_mempool::subpools::l2::L2Subpool;
-use zksync_os_network::PeerForwardedRawTransaction;
 use zksync_os_rpc_api::debug::DebugApiServer;
 use zksync_os_rpc_api::eth::EthApiServer;
 use zksync_os_rpc_api::filter::EthFilterApiServer;
@@ -79,8 +77,6 @@ pub async fn spawn<RpcStorage: ReadRpcStorage, Mempool: L2Subpool>(
     acceptance_state: watch::Receiver<TransactionAcceptanceState>,
     last_constructed_block_context: watch::Receiver<Option<BlockContext>>,
     tx_forwarder: Option<DynProvider>,
-    consensus_tx_forwarder: Option<ConsensusTxForwarder>,
-    forwarded_tx_rx: Option<mpsc::Receiver<PeerForwardedRawTransaction>>,
     gateway_provider: Option<DynProvider>,
     runtime: &Runtime,
     wait_for_db: impl Future<Output = ()> + Send + 'static,
@@ -89,34 +85,6 @@ pub async fn spawn<RpcStorage: ReadRpcStorage, Mempool: L2Subpool>(
     metrics::register_task_monitor();
 
     let mut rpc = RpcModule::new(());
-    if let Some(mut forwarded_tx_rx) = forwarded_tx_rx {
-        let consensus_tx_forwarder_for_receiver = consensus_tx_forwarder.clone();
-        let tx_handler = tx_handler::TxHandler::new(
-            config.clone(),
-            storage.clone(),
-            mempool.clone(),
-            acceptance_state.clone(),
-            None,
-            None,
-        );
-        runtime.spawn_critical_task("p2p forwarded transaction receiver", async move {
-            while let Some(request) = forwarded_tx_rx.recv().await {
-                let response = if consensus_tx_forwarder_for_receiver
-                    .as_ref()
-                    .is_some_and(|forwarder| !forwarder.is_local_leader())
-                {
-                    Err("local node is not the consensus leader".to_owned())
-                } else {
-                    tx_handler
-                        .accept_forwarded_raw_transaction(request.tx)
-                        .await
-                        .map(|_| ())
-                        .map_err(|err| err.to_string())
-                };
-                let _ = request.response_tx.send(response);
-            }
-        });
-    }
     let eth_call_handler = EthCallHandler::new(
         config.clone(),
         storage.clone(),
@@ -132,7 +100,6 @@ pub async fn spawn<RpcStorage: ReadRpcStorage, Mempool: L2Subpool>(
             chain_id,
             acceptance_state,
             tx_forwarder,
-            consensus_tx_forwarder,
         )
         .into_rpc(),
     )?;

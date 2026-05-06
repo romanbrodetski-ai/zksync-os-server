@@ -4,14 +4,12 @@ pub mod protocol;
 pub mod raft;
 pub mod service;
 pub mod session;
-pub mod tx_forward;
 pub mod version;
 mod wire;
 
 // todo: temporary re-export while we have record overrides, otherwise `wire` module should be
 //       entirely internal
 pub use service::{PeerVerifyBatch, PeerVerifyBatchResult};
-pub use tx_forward::{PeerForwardedRawTransaction, TxForwardError, TxForwardHandle};
 pub use wire::replays::RecordOverride;
 pub use wire::verification::{VerifyBatch, VerifyBatchOutcome, VerifyBatchResult};
 

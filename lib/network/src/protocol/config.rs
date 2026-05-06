@@ -1,5 +1,4 @@
 use crate::service::{PeerVerifyBatch, PeerVerifyBatchResult};
-use crate::tx_forward::PeerForwardedRawTransaction;
 use crate::wire::replays::RecordOverride;
 use alloy::primitives::{Address, BlockNumber};
 use std::sync::{Arc, RwLock};
@@ -13,8 +12,6 @@ pub struct MainNodeProtocolConfig {
     pub accepted_verifier_signers: Vec<Address>,
     /// Channel used to forward batch verification results back into the node.
     pub verify_result_tx: mpsc::Sender<PeerVerifyBatchResult>,
-    /// Channel used to hand p2p-forwarded transactions to the local RPC validation path.
-    pub forwarded_tx_tx: Option<mpsc::Sender<PeerForwardedRawTransaction>>,
 }
 
 /// Dependencies required to run the external-node side of the `zks` protocol.

@@ -5,8 +5,7 @@ use crate::protocol::{
 };
 use crate::raft::protocol::RaftProtocolHandler;
 use crate::session::PeerSessionStore;
-use crate::tx_forward::TxForwardHandle;
-use crate::version::{ZksProtocolV1, ZksProtocolV2, ZksProtocolV3, ZksProtocolV4, ZksProtocolV5};
+use crate::version::{ZksProtocolV1, ZksProtocolV2, ZksProtocolV3, ZksProtocolV4};
 use crate::wire::message::ZksMessage;
 use crate::{VerifyBatch, VerifyBatchResult};
 use alloy::eips::eip2124::Head;
@@ -155,7 +154,6 @@ pub struct NetworkService {
     protocol_rx: mpsc::UnboundedReceiver<ProtocolEvent>,
     peer_sessions: Arc<RwLock<PeerSessionStore>>,
     connection_registry: ConnectionRegistry,
-    tx_forward: TxForwardHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -273,7 +271,6 @@ impl NetworkService {
             // Use genesis as chain head
             .set_head(genesis);
         let connection_registry: ConnectionRegistry = Arc::new(RwLock::new(HashMap::new()));
-        let tx_forward = TxForwardHandle::new(connection_registry.clone());
         let mut cfg_builder = match protocol_config {
             ZksProtocolConfig::MainNode(protocol) => Self::register_main_node_rlpx_sub_protocols(
                 cfg_builder,
@@ -281,7 +278,6 @@ impl NetworkService {
                 replay,
                 protocol_tx,
                 connection_registry.clone(),
-                tx_forward.clone(),
             ),
             ZksProtocolConfig::ExternalNode(protocol) => {
                 Self::register_external_node_rlpx_sub_protocols(
@@ -308,12 +304,7 @@ impl NetworkService {
             protocol_rx,
             peer_sessions: Arc::new(RwLock::new(PeerSessionStore::default())),
             connection_registry,
-            tx_forward,
         })
-    }
-
-    pub fn tx_forward_handle(&self) -> TxForwardHandle {
-        self.tx_forward.clone()
     }
 
     fn register_main_node_rlpx_sub_protocols(
@@ -322,7 +313,6 @@ impl NetworkService {
         replay: impl ReadReplay + Clone,
         protocol_tx: mpsc::UnboundedSender<ProtocolEvent>,
         connection_registry: ConnectionRegistry,
-        tx_forward: TxForwardHandle,
     ) -> NetworkConfigBuilder {
         let state = HandlerSharedState::new(protocol_tx, MAX_ACTIVE_CONNECTIONS);
         builder
@@ -334,35 +324,24 @@ impl NetworkService {
                 protocol.clone(),
                 state.clone(),
                 connection_registry.clone(),
-                tx_forward.clone(),
             ))
             .add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV2, _>::for_main_node(
                 replay.clone(),
                 protocol.clone(),
                 state.clone(),
                 connection_registry.clone(),
-                tx_forward.clone(),
             ))
             .add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV3, _>::for_main_node(
                 replay.clone(),
                 protocol.clone(),
                 state.clone(),
                 connection_registry.clone(),
-                tx_forward.clone(),
             ))
             .add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV4, _>::for_main_node(
-                replay.clone(),
-                protocol.clone(),
-                state.clone(),
-                connection_registry.clone(),
-                tx_forward.clone(),
-            ))
-            .add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV5, _>::for_main_node(
                 replay,
                 protocol,
                 state,
                 connection_registry,
-                tx_forward,
             ))
     }
 
@@ -394,12 +373,6 @@ impl NetworkService {
                 connection_registry.clone(),
             ))
             .add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV4, _>::for_external_node(
-                replay.clone(),
-                protocol.clone(),
-                state.clone(),
-                connection_registry.clone(),
-            ))
-            .add_rlpx_sub_protocol(ZksProtocolHandler::<ZksProtocolV5, _>::for_external_node(
                 replay,
                 protocol,
                 state,
