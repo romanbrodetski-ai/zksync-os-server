@@ -6,26 +6,19 @@ use tokio::sync::watch;
 use zksync_os_raft::RaftConsensusStatus;
 use zksync_os_rpc::{TxForwardEndpoint, TxForwarder};
 
-pub async fn build_tx_forwarder(
+pub async fn build_static_tx_forwarder(url: &str) -> TxForwarder {
+    let provider = ProviderBuilder::new()
+        .connect(url)
+        .await
+        .expect("could not connect to main node RPC")
+        .erased();
+    TxForwarder::static_target(TxForwardEndpoint::new(url.to_owned(), provider))
+}
+
+pub async fn build_consensus_tx_forwarder(
     config: &Config,
-    raft_status_rx: Option<watch::Receiver<Option<RaftConsensusStatus>>>,
-) -> Option<TxForwarder> {
-    if let Some(url) = config.general_config.main_node_rpc_url.as_ref() {
-        let provider = ProviderBuilder::new()
-            .connect(url)
-            .await
-            .expect("could not connect to main node RPC")
-            .erased();
-        return Some(TxForwarder::static_target(TxForwardEndpoint::new(
-            url.clone(),
-            provider,
-        )));
-    }
-
-    if !config.consensus_config.enabled {
-        return None;
-    }
-
+    status_rx: watch::Receiver<Option<RaftConsensusStatus>>,
+) -> TxForwarder {
     let node_id = config
         .network_config
         .derived_peer_id()
@@ -50,9 +43,7 @@ pub async fn build_tx_forwarder(
         }
     }
 
-    let status_rx = raft_status_rx
-        .expect("consensus status receiver must be present when consensus is enabled");
-    Some(TxForwarder::consensus_leader(node_id, status_rx, providers))
+    TxForwarder::consensus_leader(node_id, status_rx, providers)
 }
 
 fn parse_consensus_rpc_forwarder(endpoint: &str) -> anyhow::Result<(String, String)> {

@@ -39,7 +39,7 @@ use crate::prover_input_generator::ProverInputGenerator;
 use crate::provider::build_node_provider;
 use crate::state_initializer::StateInitializer;
 use crate::tree_manager::TreeManager;
-use crate::tx_forwarder::build_tx_forwarder;
+use crate::tx_forwarder::{build_consensus_tx_forwarder, build_static_tx_forwarder};
 use alloy::consensus::BlobTransactionSidecar;
 use alloy::network::{Ethereum, EthereumWallet};
 use alloy::primitives::BlockNumber;
@@ -739,7 +739,16 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let (tx_acceptance_state_sender, tx_acceptance_state_receiver) =
         watch::channel(TransactionAcceptanceState::Accepting);
 
-    let tx_forwarder = build_tx_forwarder(&config, raft_status_rx.clone()).await;
+    let tx_forwarder = if let Some(url) = config.general_config.main_node_rpc_url.as_ref() {
+        Some(build_static_tx_forwarder(url).await)
+    } else if config.consensus_config.enabled {
+        let status_rx = raft_status_rx
+            .clone()
+            .expect("consensus status receiver must be present when consensus is enabled");
+        Some(build_consensus_tx_forwarder(&config, status_rx).await)
+    } else {
+        None
+    };
 
     let (last_constructed_block_ctx_sender, last_constructed_block_ctx_receiver) =
         watch::channel(None);
