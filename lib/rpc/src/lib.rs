@@ -23,7 +23,7 @@ mod monitoring_middleware;
 mod net_impl;
 mod sandbox;
 mod tx_handler;
-pub use tx_handler::{ConsensusLeaderState, TxForwarder};
+pub use tx_handler::{TxForwardEndpoint, TxForwarder};
 mod txpool_impl;
 mod types;
 mod unstable_impl;

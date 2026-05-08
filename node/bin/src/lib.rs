@@ -15,6 +15,7 @@ mod prover_input_generator;
 mod provider;
 mod state_initializer;
 pub mod tree_manager;
+mod tx_forwarder;
 pub mod util;
 
 use crate::batch_sink::{BatchSink, NoOpSink, clear_failing_block_config_task};
@@ -38,17 +39,17 @@ use crate::prover_input_generator::ProverInputGenerator;
 use crate::provider::build_node_provider;
 use crate::state_initializer::StateInitializer;
 use crate::tree_manager::TreeManager;
+use crate::tx_forwarder::build_tx_forwarder;
 use alloy::consensus::BlobTransactionSidecar;
 use alloy::network::{Ethereum, EthereumWallet};
 use alloy::primitives::BlockNumber;
 use alloy::providers::fillers::{FillProvider, TxFiller};
-use alloy::providers::{Provider, ProviderBuilder, WalletProvider};
+use alloy::providers::{Provider, WalletProvider};
 use anyhow::Context;
 use jsonrpsee::http_client::HttpClient;
 use priority_tree_pipeline_step::PriorityTreePipelineStep;
 use reth_tasks::Runtime;
 use ruint::aliases::U256;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -101,7 +102,7 @@ use zksync_os_raft::{
 };
 use zksync_os_reth_compat::provider::ZkProviderFactory;
 use zksync_os_revm_consistency_checker::node::RevmConsistencyChecker;
-use zksync_os_rpc::{ConsensusLeaderState, EthCallHandler, RpcStorage, TxForwarder};
+use zksync_os_rpc::{EthCallHandler, RpcStorage};
 use zksync_os_rpc_api::eth::EthApiClient;
 use zksync_os_sequencer::execution::block_context_provider::BlockContextProvider;
 use zksync_os_sequencer::execution::{
@@ -127,23 +128,6 @@ const PRIORITY_TREE_DB_NAME: &str = "priority_txs_tree";
 const REPOSITORY_DB_NAME: &str = "repository";
 const BATCH_DB_NAME: &str = "batch";
 pub const INTERNAL_CONFIG_FILE_NAME: &str = "internal_config.json";
-
-fn parse_consensus_rpc_forwarder(endpoint: &str) -> anyhow::Result<(String, String)> {
-    let endpoint = endpoint.trim();
-    let endpoint = if endpoint.contains("://") {
-        endpoint.to_owned()
-    } else {
-        format!("enode://{endpoint}")
-    };
-    let peer: zksync_os_network::TrustedPeer = endpoint.parse().with_context(
-        || "expected `consensus.tx_forwarding_rpc_urls` entry as `<peer_id>@<host>:<rpc_port>`",
-    )?;
-
-    Ok((
-        peer.id.to_string(),
-        format!("http://{}:{}", peer.host, peer.tcp_port),
-    ))
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone>(
@@ -755,69 +739,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let (tx_acceptance_state_sender, tx_acceptance_state_receiver) =
         watch::channel(TransactionAcceptanceState::Accepting);
 
-    let tx_forwarder = if let Some(url) = config.general_config.main_node_rpc_url.as_ref() {
-        let provider = ProviderBuilder::new()
-            .connect(url)
-            .await
-            .expect("could not connect to main node RPC")
-            .erased();
-        Some(TxForwarder::main_node(provider))
-    } else if config.consensus_config.enabled {
-        let node_id = config
-            .network_config
-            .derived_peer_id()
-            .expect("failed to derive local consensus peer id")
-            .to_string();
-        let mut providers = HashMap::new();
-        for endpoint in &config.consensus_config.tx_forwarding_rpc_urls {
-            let (peer_id, rpc_url) = parse_consensus_rpc_forwarder(endpoint)
-                .unwrap_or_else(|err| panic!("invalid consensus tx RPC forwarder: {err:#}"));
-            let provider = ProviderBuilder::new()
-                .connect(&rpc_url)
-                .await
-                .unwrap_or_else(|err| {
-                    panic!("could not connect to consensus RPC {rpc_url} for peer {peer_id}: {err}")
-                })
-                .erased();
-            providers.insert(peer_id, provider);
-        }
-        for peer_id in &config.consensus_config.peer_ids {
-            if !providers.contains_key(&peer_id.to_string()) {
-                panic!("missing consensus tx RPC forwarder for peer {peer_id}");
-            }
-        }
-
-        let mut raft_status_rx = raft_status_rx
-            .clone()
-            .expect("consensus status receiver must be present when consensus is enabled");
-        let (leader_state_tx, leader_state_rx) = watch::channel(ConsensusLeaderState::default());
-        runtime.spawn_critical_task("consensus tx leader tracker", async move {
-            loop {
-                let leader_state = raft_status_rx
-                    .borrow()
-                    .as_ref()
-                    .map(|status| ConsensusLeaderState {
-                        is_leader: status.is_leader,
-                        current_leader: status.current_leader.clone(),
-                    })
-                    .unwrap_or_default();
-                if leader_state_tx.send(leader_state).is_err() {
-                    break;
-                }
-                if raft_status_rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        Some(TxForwarder::consensus_leader(
-            node_id,
-            leader_state_rx,
-            providers,
-        ))
-    } else {
-        None
-    };
+    let tx_forwarder = build_tx_forwarder(&config, raft_status_rx.clone()).await;
 
     let (last_constructed_block_ctx_sender, last_constructed_block_ctx_receiver) =
         watch::channel(None);

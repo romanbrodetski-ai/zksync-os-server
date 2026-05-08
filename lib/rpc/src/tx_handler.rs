@@ -12,6 +12,7 @@ use tokio::sync::watch;
 use zksync_os_mempool::PoolError;
 use zksync_os_mempool::subpools::l2::L2Subpool;
 use zksync_os_mempool::{InvalidPoolTransactionError, PoolErrorKind};
+use zksync_os_raft::RaftConsensusStatus;
 use zksync_os_rpc_api::types::ZkTransactionReceipt;
 use zksync_os_types::{L2Envelope, L2Transaction, NotAcceptingReason, TransactionAcceptanceState};
 
@@ -28,12 +29,6 @@ pub struct TxHandler<RpcStorage, Mempool> {
     tx_forwarder: Option<TxForwarder>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct ConsensusLeaderState {
-    pub is_leader: bool,
-    pub current_leader: Option<String>,
-}
-
 /// ENs use `main_node_rpc_url`; with consensus they may hit any node, which forwards to leader.
 #[derive(Clone)]
 pub struct TxForwarder {
@@ -42,59 +37,87 @@ pub struct TxForwarder {
 
 #[derive(Clone)]
 enum TxForwardTarget {
-    MainNode(DynProvider),
+    /// Used on ENs: forwards to `main_node_rpc_url` or any configured consensus node.
+    StaticTarget(TxForwardEndpoint),
+    /// Used on consensus nodes: forwards to the current leader from Raft status.
     ConsensusLeader {
         node_id: String,
-        leader_state: watch::Receiver<ConsensusLeaderState>,
-        providers: HashMap<String, DynProvider>,
+        status_rx: watch::Receiver<Option<RaftConsensusStatus>>,
+        providers: HashMap<String, TxForwardEndpoint>,
     },
 }
 
+#[derive(Clone)]
+pub struct TxForwardEndpoint {
+    rpc_url: String,
+    provider: DynProvider,
+}
+
+impl TxForwardEndpoint {
+    pub fn new(rpc_url: String, provider: DynProvider) -> Self {
+        Self { rpc_url, provider }
+    }
+}
+
 impl TxForwarder {
-    pub fn main_node(provider: DynProvider) -> Self {
+    pub fn static_target(endpoint: TxForwardEndpoint) -> Self {
         Self {
-            target: TxForwardTarget::MainNode(provider),
+            target: TxForwardTarget::StaticTarget(endpoint),
         }
     }
 
     pub fn consensus_leader(
         node_id: String,
-        leader_state: watch::Receiver<ConsensusLeaderState>,
-        providers: HashMap<String, DynProvider>,
+        status_rx: watch::Receiver<Option<RaftConsensusStatus>>,
+        providers: HashMap<String, TxForwardEndpoint>,
     ) -> Self {
         Self {
             target: TxForwardTarget::ConsensusLeader {
                 node_id,
-                leader_state,
+                status_rx,
                 providers,
             },
         }
     }
 
-    async fn forward_raw_transaction(&self, tx_bytes: &Bytes) -> Result<(), TxForwardError> {
+    async fn forward_raw_transaction(
+        &self,
+        tx_hash: B256,
+        tx_bytes: &Bytes,
+    ) -> Result<(), TxForwardError> {
         match &self.target {
-            TxForwardTarget::MainNode(provider) => {
-                let _ = provider.send_raw_transaction(tx_bytes).await?;
+            TxForwardTarget::StaticTarget(endpoint) => {
+                tracing::debug!(%tx_hash, rpc_url = %endpoint.rpc_url, "forwarding transaction");
+                let _ = endpoint.provider.send_raw_transaction(tx_bytes).await?;
             }
             TxForwardTarget::ConsensusLeader {
                 node_id,
-                leader_state,
+                status_rx,
                 providers,
             } => {
-                let state = leader_state.borrow().clone();
-                if state.is_leader {
+                let status = status_rx.borrow().clone();
+                if status.as_ref().is_some_and(|status| status.is_leader) {
+                    tracing::debug!(%tx_hash, "not forwarding transaction: node is leader");
                     return Ok(());
                 }
 
-                let leader = state.current_leader.ok_or(TxForwardError::NoKnownLeader)?;
+                let leader = status
+                    .and_then(|status| status.current_leader)
+                    .ok_or(TxForwardError::NoKnownLeader)?;
                 if leader == *node_id {
                     return Err(TxForwardError::NoKnownLeader);
                 }
-                let provider = providers
+                let endpoint = providers
                     .get(&leader)
                     .ok_or_else(|| TxForwardError::NoProvider(leader.clone()))?;
 
-                let _ = provider.send_raw_transaction(tx_bytes).await?;
+                tracing::debug!(
+                    %tx_hash,
+                    leader = %leader,
+                    rpc_url = %endpoint.rpc_url,
+                    "forwarding transaction to consensus leader"
+                );
+                let _ = endpoint.provider.send_raw_transaction(tx_bytes).await?;
             }
         }
 
@@ -156,7 +179,7 @@ impl<RpcStorage: ReadRpcStorage, Mempool: L2Subpool> TxHandler<RpcStorage, Mempo
         if let Some(tx_forwarder) = self.tx_forwarder.as_ref() {
             let forwarding_result = {
                 let _guard = ForwardingLatencyGuard::new();
-                tx_forwarder.forward_raw_transaction(&tx_bytes).await
+                tx_forwarder.forward_raw_transaction(hash, &tx_bytes).await
             };
             // We do not need to wait for pending transaction here, so it's safe to forget about it
             if let Err(err) = forwarding_result {
