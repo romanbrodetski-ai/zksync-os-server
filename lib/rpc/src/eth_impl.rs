@@ -3,7 +3,7 @@ use crate::eth_call_handler::EthCallHandler;
 use crate::metrics::{TX_SUBMISSION, TxRejectionReason};
 use crate::result::{ToRpcResult, internal_rpc_err, unimplemented_rpc_err};
 use crate::rpc_storage::{ReadRpcStorage, RpcStorageError};
-use crate::tx_handler::{ConsensusTxForwarder, EthSendRawTransactionSyncError, TxHandler};
+use crate::tx_handler::{EthSendRawTransactionSyncError, TxForwarder, TxHandler};
 use alloy::consensus::TrieAccount;
 use alloy::consensus::transaction::Recovered;
 use alloy::dyn_abi::TypedData;
@@ -12,7 +12,6 @@ use alloy::eips::{BlockId, BlockNumberOrTag, Encodable2718};
 use alloy::network::BlockResponse;
 use alloy::network::primitives::BlockTransactions;
 use alloy::primitives::{Address, B256, Bytes, TxHash, U64, U256};
-use alloy::providers::DynProvider;
 use alloy::rpc::types::simulate::{SimulatePayload, SimulatedBlock};
 use alloy::rpc::types::state::StateOverride;
 use alloy::rpc::types::{
@@ -56,8 +55,7 @@ impl<RpcStorage: ReadRpcStorage, Mempool: L2Subpool> EthNamespace<RpcStorage, Me
         eth_call_handler: EthCallHandler<RpcStorage>,
         chain_id: u64,
         acceptance_state: watch::Receiver<TransactionAcceptanceState>,
-        tx_forwarder: Option<DynProvider>,
-        consensus_tx_forwarder: Option<ConsensusTxForwarder>,
+        tx_forwarder: Option<TxForwarder>,
     ) -> Self {
         let tx_handler = TxHandler::new(
             config.clone(),
@@ -65,7 +63,6 @@ impl<RpcStorage: ReadRpcStorage, Mempool: L2Subpool> EthNamespace<RpcStorage, Me
             mempool.clone(),
             acceptance_state,
             tx_forwarder,
-            consensus_tx_forwarder,
         );
 
         Self {

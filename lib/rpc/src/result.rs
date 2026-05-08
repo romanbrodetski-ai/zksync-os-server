@@ -8,7 +8,9 @@ use crate::debug_impl::DebugError;
 use crate::eth_call_handler::EthCallError;
 use crate::eth_filter::EthFilterError;
 use crate::eth_impl::EthError;
-use crate::tx_handler::{EthSendRawTransactionError, EthSendRawTransactionSyncError};
+use crate::tx_handler::{
+    EthSendRawTransactionError, EthSendRawTransactionSyncError, TxForwardError,
+};
 use crate::unstable_impl::UnstableError;
 use crate::zks_impl::ZksError;
 use alloy::primitives::Bytes;
@@ -83,15 +85,12 @@ impl<Ok> ToRpcResult<Ok, EthSendRawTransactionError> for Result<Ok, EthSendRawTr
             EthSendRawTransactionError::NotAcceptingTransactions(_) => {
                 internal_rpc_err(err.to_string())
             }
-            EthSendRawTransactionError::ConsensusForwardError(ref consensus_err) => {
-                if let crate::tx_handler::ConsensusForwardError::Rpc(rpc_err) = consensus_err {
+            EthSendRawTransactionError::ForwardError(ref forward_err) => {
+                if let TxForwardError::Rpc(rpc_err) = forward_err {
                     forward_error_to_rpc_err(rpc_err, &err)
                 } else {
                     internal_rpc_err(err.to_string())
                 }
-            }
-            EthSendRawTransactionError::ForwardError(ref rpc_err) => {
-                forward_error_to_rpc_err(rpc_err, &err)
             }
         })
     }

@@ -101,7 +101,7 @@ use zksync_os_raft::{
 };
 use zksync_os_reth_compat::provider::ZkProviderFactory;
 use zksync_os_revm_consistency_checker::node::RevmConsistencyChecker;
-use zksync_os_rpc::{ConsensusLeaderState, ConsensusTxForwarder, EthCallHandler, RpcStorage};
+use zksync_os_rpc::{ConsensusLeaderState, EthCallHandler, RpcStorage, TxForwarder};
 use zksync_os_rpc_api::eth::EthApiClient;
 use zksync_os_sequencer::execution::block_context_provider::BlockContextProvider;
 use zksync_os_sequencer::execution::{
@@ -127,6 +127,23 @@ const PRIORITY_TREE_DB_NAME: &str = "priority_txs_tree";
 const REPOSITORY_DB_NAME: &str = "repository";
 const BATCH_DB_NAME: &str = "batch";
 pub const INTERNAL_CONFIG_FILE_NAME: &str = "internal_config.json";
+
+fn parse_consensus_rpc_forwarder(endpoint: &str) -> anyhow::Result<(String, String)> {
+    let endpoint = endpoint.trim();
+    let endpoint = if endpoint.contains("://") {
+        endpoint.to_owned()
+    } else {
+        format!("enode://{endpoint}")
+    };
+    let peer: zksync_os_network::TrustedPeer = endpoint.parse().with_context(
+        || "expected `consensus.tx_forwarding_rpc_urls` entry as `<peer_id>@<host>:<rpc_port>`",
+    )?;
+
+    Ok((
+        peer.id.to_string(),
+        format!("http://{}:{}", peer.host, peer.tcp_port),
+    ))
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone>(
@@ -738,37 +755,36 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
     let (tx_acceptance_state_sender, tx_acceptance_state_receiver) =
         watch::channel(TransactionAcceptanceState::Accepting);
 
-    let main_node_provider = if let Some(url) = config.general_config.main_node_rpc_url.as_ref() {
-        Some(
-            ProviderBuilder::new()
-                .connect(url)
-                .await
-                .expect("could not connect to main node RPC")
-                .erased(),
-        )
-    } else {
-        None
-    };
-
-    let consensus_tx_forwarder = if config.consensus_config.enabled {
+    let tx_forwarder = if let Some(url) = config.general_config.main_node_rpc_url.as_ref() {
+        let provider = ProviderBuilder::new()
+            .connect(url)
+            .await
+            .expect("could not connect to main node RPC")
+            .erased();
+        Some(TxForwarder::main_node(provider))
+    } else if config.consensus_config.enabled {
         let node_id = config
             .network_config
             .derived_peer_id()
             .expect("failed to derive local consensus peer id")
             .to_string();
         let mut providers = HashMap::new();
-        for target in &config.consensus_config.tx_forwarding_rpc_urls {
+        for endpoint in &config.consensus_config.tx_forwarding_rpc_urls {
+            let (peer_id, rpc_url) = parse_consensus_rpc_forwarder(endpoint)
+                .unwrap_or_else(|err| panic!("invalid consensus tx RPC forwarder: {err:#}"));
             let provider = ProviderBuilder::new()
-                .connect(&target.rpc_url)
+                .connect(&rpc_url)
                 .await
                 .unwrap_or_else(|err| {
-                    panic!(
-                        "could not connect to consensus RPC {} for peer {}: {err}",
-                        target.rpc_url, target.peer_id
-                    )
+                    panic!("could not connect to consensus RPC {rpc_url} for peer {peer_id}: {err}")
                 })
                 .erased();
-            providers.insert(target.peer_id.to_string(), provider);
+            providers.insert(peer_id, provider);
+        }
+        for peer_id in &config.consensus_config.peer_ids {
+            if !providers.contains_key(&peer_id.to_string()) {
+                panic!("missing consensus tx RPC forwarder for peer {peer_id}");
+            }
         }
 
         let mut raft_status_rx = raft_status_rx
@@ -794,7 +810,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
             }
         });
 
-        Some(ConsensusTxForwarder::new(
+        Some(TxForwarder::consensus_leader(
             node_id,
             leader_state_rx,
             providers,
@@ -1113,8 +1129,7 @@ pub async fn run<State: ReadStateHistory + WriteState + StateInitializer + Clone
         genesis_input_source,
         tx_acceptance_state_receiver,
         last_constructed_block_ctx_receiver,
-        main_node_provider,
-        consensus_tx_forwarder,
+        tx_forwarder,
         gateway_provider.map(|p| p.erased()),
         runtime,
         wait_for_db,

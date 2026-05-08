@@ -66,10 +66,15 @@ async fn send_transfer_to_node(
     node: &Tester,
 ) -> anyhow::Result<alloy::rpc::types::TransactionReceipt> {
     let gas_price = node.l2_provider.get_gas_price().await?;
+    let nonce = node
+        .l2_provider
+        .get_transaction_count(node.l2_wallet.default_signer().address())
+        .await?;
     let tx = TransactionRequest::default()
         .with_to(Address::random())
         .with_value(U256::from(1))
-        .with_gas_price(gas_price);
+        .with_gas_price(gas_price)
+        .with_nonce(nonce);
     node.l2_provider
         .send_transaction(tx)
         .await?

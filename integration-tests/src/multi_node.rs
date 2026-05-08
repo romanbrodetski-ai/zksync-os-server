@@ -7,7 +7,6 @@ use zksync_os_status_server::StatusResponse;
 use crate::{
     AnvilL1, ChainLayout, Config, NodeRole, PROTOCOL_VERSION, Ports, StoppedTester, Tester,
 };
-use zksync_os_server::config::ConsensusRpcForwarderConfig;
 
 const TEST_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(100);
 const TEST_ELECTION_TIMEOUT_MIN: Duration = Duration::from_secs(2);
@@ -601,10 +600,7 @@ impl MultiNodeTesterBuilder {
         let tx_forwarding_rpc_urls = node_records
             .iter()
             .zip(node_ports.iter())
-            .map(|(record, ports)| ConsensusRpcForwarderConfig {
-                peer_id: record.id,
-                rpc_url: format!("http://127.0.0.1:{}", ports.l2_rpc.port),
-            })
+            .map(|(record, ports)| format!("{}@127.0.0.1:{}", record.id, ports.l2_rpc.port))
             .collect::<Vec<_>>();
 
         let l1 = AnvilL1::start(ChainLayout::Default {

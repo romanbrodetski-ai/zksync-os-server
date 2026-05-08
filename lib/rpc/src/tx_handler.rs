@@ -25,8 +25,7 @@ pub struct TxHandler<RpcStorage, Mempool> {
     storage: RpcStorage,
     mempool: Mempool,
     acceptance_state: watch::Receiver<TransactionAcceptanceState>,
-    tx_forwarder: Option<DynProvider>,
-    consensus_tx_forwarder: Option<ConsensusTxForwarder>,
+    tx_forwarder: Option<TxForwarder>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -35,50 +34,76 @@ pub struct ConsensusLeaderState {
     pub current_leader: Option<String>,
 }
 
+/// ENs use `main_node_rpc_url`; with consensus they may hit any node, which forwards to leader.
 #[derive(Clone)]
-pub struct ConsensusTxForwarder {
-    node_id: String,
-    leader_state: watch::Receiver<ConsensusLeaderState>,
-    providers: HashMap<String, DynProvider>,
+pub struct TxForwarder {
+    target: TxForwardTarget,
 }
 
-impl ConsensusTxForwarder {
-    pub fn new(
+#[derive(Clone)]
+enum TxForwardTarget {
+    MainNode(DynProvider),
+    ConsensusLeader {
+        node_id: String,
+        leader_state: watch::Receiver<ConsensusLeaderState>,
+        providers: HashMap<String, DynProvider>,
+    },
+}
+
+impl TxForwarder {
+    pub fn main_node(provider: DynProvider) -> Self {
+        Self {
+            target: TxForwardTarget::MainNode(provider),
+        }
+    }
+
+    pub fn consensus_leader(
         node_id: String,
         leader_state: watch::Receiver<ConsensusLeaderState>,
         providers: HashMap<String, DynProvider>,
     ) -> Self {
         Self {
-            node_id,
-            leader_state,
-            providers,
+            target: TxForwardTarget::ConsensusLeader {
+                node_id,
+                leader_state,
+                providers,
+            },
         }
     }
 
-    async fn forward_raw_transaction(&self, tx_bytes: Bytes) -> Result<(), ConsensusForwardError> {
-        let state = self.leader_state.borrow().clone();
-        if state.is_leader {
-            return Ok(());
+    async fn forward_raw_transaction(&self, tx_bytes: &Bytes) -> Result<(), TxForwardError> {
+        match &self.target {
+            TxForwardTarget::MainNode(provider) => {
+                let _ = provider.send_raw_transaction(tx_bytes).await?;
+            }
+            TxForwardTarget::ConsensusLeader {
+                node_id,
+                leader_state,
+                providers,
+            } => {
+                let state = leader_state.borrow().clone();
+                if state.is_leader {
+                    return Ok(());
+                }
+
+                let leader = state.current_leader.ok_or(TxForwardError::NoKnownLeader)?;
+                if leader == *node_id {
+                    return Err(TxForwardError::NoKnownLeader);
+                }
+                let provider = providers
+                    .get(&leader)
+                    .ok_or_else(|| TxForwardError::NoProvider(leader.clone()))?;
+
+                let _ = provider.send_raw_transaction(tx_bytes).await?;
+            }
         }
 
-        let leader = state
-            .current_leader
-            .ok_or(ConsensusForwardError::NoKnownLeader)?;
-        if leader == self.node_id {
-            return Err(ConsensusForwardError::NoKnownLeader);
-        }
-        let provider = self
-            .providers
-            .get(&leader)
-            .ok_or_else(|| ConsensusForwardError::NoProvider(leader.clone()))?;
-
-        let _ = provider.send_raw_transaction(&tx_bytes).await?;
         Ok(())
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ConsensusForwardError {
+pub enum TxForwardError {
     #[error("consensus leader is unknown")]
     NoKnownLeader,
     #[error("no RPC forwarder is configured for consensus leader {0}")]
@@ -93,8 +118,7 @@ impl<RpcStorage: ReadRpcStorage, Mempool: L2Subpool> TxHandler<RpcStorage, Mempo
         storage: RpcStorage,
         mempool: Mempool,
         acceptance_state: watch::Receiver<TransactionAcceptanceState>,
-        tx_forwarder: Option<DynProvider>,
-        consensus_tx_forwarder: Option<ConsensusTxForwarder>,
+        tx_forwarder: Option<TxForwarder>,
     ) -> Self {
         Self {
             config,
@@ -102,7 +126,6 @@ impl<RpcStorage: ReadRpcStorage, Mempool: L2Subpool> TxHandler<RpcStorage, Mempo
             mempool,
             acceptance_state,
             tx_forwarder,
-            consensus_tx_forwarder,
         }
     }
 
@@ -133,24 +156,11 @@ impl<RpcStorage: ReadRpcStorage, Mempool: L2Subpool> TxHandler<RpcStorage, Mempo
         if let Some(tx_forwarder) = self.tx_forwarder.as_ref() {
             let forwarding_result = {
                 let _guard = ForwardingLatencyGuard::new();
-                tx_forwarder.send_raw_transaction(&tx_bytes).await
+                tx_forwarder.forward_raw_transaction(&tx_bytes).await
             };
             // We do not need to wait for pending transaction here, so it's safe to forget about it
             if let Err(err) = forwarding_result {
-                tracing::debug!(%err, "forwarding error from main node back to user");
-                // Remove previously added transaction from local mempool
-                self.mempool.remove_transactions(vec![hash]);
-                return Err(err.into());
-            }
-        }
-
-        if let Some(tx_forwarder) = self.consensus_tx_forwarder.as_ref() {
-            let forwarding_result = {
-                let _guard = ForwardingLatencyGuard::new();
-                tx_forwarder.forward_raw_transaction(tx_bytes).await
-            };
-            if let Err(err) = forwarding_result {
-                tracing::debug!(%err, "consensus forwarding error from leader RPC back to user");
+                tracing::debug!(%err, "transaction forwarding error back to user");
                 self.mempool.remove_transactions(vec![hash]);
                 return Err(err.into());
             }
@@ -229,12 +239,9 @@ pub enum EthSendRawTransactionError {
     /// Errors related to the transaction pool
     #[error(transparent)]
     PoolError(#[from] PoolError),
-    /// Error forwarded from main node
+    /// Error while forwarding transaction
     #[error(transparent)]
-    ForwardError(#[from] RpcError<TransportErrorKind>),
-    /// Error forwarded from consensus leader RPC.
-    #[error(transparent)]
-    ConsensusForwardError(#[from] ConsensusForwardError),
+    ForwardError(#[from] TxForwardError),
     #[error("Signer is blacklisted")]
     BlacklistedSigner,
 }
@@ -246,12 +253,8 @@ impl From<&EthSendRawTransactionError> for TxRejectionReason {
             EthSendRawTransactionError::InvalidTransactionSignature => Self::InvalidSignature,
             EthSendRawTransactionError::NotAcceptingTransactions(_) => Self::NotAccepting,
             EthSendRawTransactionError::BlacklistedSigner => Self::BlacklistedSigner,
-            EthSendRawTransactionError::ConsensusForwardError(err) => match err {
-                ConsensusForwardError::Rpc(RpcError::ErrorResp(_)) => Self::ForwardRejected,
-                _ => Self::ForwardTransportError,
-            },
-            EthSendRawTransactionError::ForwardError(rpc_err) => match rpc_err {
-                RpcError::ErrorResp(_) => Self::ForwardRejected,
+            EthSendRawTransactionError::ForwardError(err) => match err {
+                TxForwardError::Rpc(RpcError::ErrorResp(_)) => Self::ForwardRejected,
                 _ => Self::ForwardTransportError,
             },
             EthSendRawTransactionError::PoolError(pool_err) => Self::from(&pool_err.kind),
