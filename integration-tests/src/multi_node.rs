@@ -4,8 +4,13 @@ use std::time::Duration;
 use tokio::time::Instant;
 use zksync_os_status_server::StatusResponse;
 
+/// Each respawn during a wait-helper poll buys this much extra time, since the freshly
+/// respawned node needs to finish booting and the cluster needs another election cycle.
+const RESPAWN_GRACE: Duration = Duration::from_secs(10);
+
 use crate::{
     AnvilL1, ChainLayout, Config, NodeRole, PROTOCOL_VERSION, Ports, StoppedTester, Tester,
+    provider::ZksyncTestingProvider,
 };
 
 const TEST_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(100);
@@ -34,15 +39,6 @@ pub struct ClusterState {
 }
 
 impl ClusterState {
-    /// Collects status from all non-suspended nodes in parallel.
-    async fn collect_active(nodes: &[NodeSlot]) -> Self {
-        let node_indices = nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, node)| node.running().is_some().then_some(idx));
-        Self::collect_indices(nodes, node_indices).await
-    }
-
     /// Collects status from the selected node indices in parallel.
     async fn collect_indices(
         nodes: &[NodeSlot],
@@ -250,37 +246,6 @@ impl ClusterState {
         }
     }
 
-    /// Returns true if all healthy nodes report the same non-empty `last_applied_index`.
-    pub fn all_have_same_last_applied_index_at_or_above(&self, min_index: u64) -> bool {
-        let mut last_applied = self.nodes.iter().filter_map(|(_, result)| {
-            result
-                .as_ref()
-                .ok()?
-                .consensus
-                .raft
-                .as_ref()?
-                .last_applied_index
-        });
-        let Some(first) = last_applied.next() else {
-            return false;
-        };
-        first >= min_index && last_applied.all(|idx| idx == first) && self.all_healthy()
-    }
-
-    pub fn agreed_last_applied_index(&self) -> Option<u64> {
-        let mut last_applied = self.nodes.iter().filter_map(|(_, result)| {
-            result
-                .as_ref()
-                .ok()?
-                .consensus
-                .raft
-                .as_ref()?
-                .last_applied_index
-        });
-        let first = last_applied.next()?;
-        last_applied.all(|idx| idx == first).then_some(first)
-    }
-
     fn status_for_index(&self, index: usize) -> Option<&StatusResponse> {
         self.nodes
             .iter()
@@ -381,6 +346,37 @@ impl MultiNodeTester {
         Ok(())
     }
 
+    /// Respawn any running node whose runtime reported a critical-task panic, reusing its
+    /// on-disk state and ports. Mirrors what a production orchestrator does on a `reth_tasks`
+    /// critical-task panic (notably the deliberate panic in
+    /// `lib/raft/src/leadership_monitor.rs` when a leader is demoted) so cluster-wait helpers
+    /// can recover from a transient leader flicker without leaving a dead status endpoint.
+    /// Returns the number of nodes respawned in this sweep.
+    async fn respawn_crashed_running_nodes(&mut self) -> anyhow::Result<usize> {
+        let crashed: Vec<usize> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                NodeSlot::Running(t) if t.has_crashed() => Some(idx),
+                _ => None,
+            })
+            .collect();
+        let count = crashed.len();
+        for idx in crashed {
+            tracing::warn!("node {idx} crashed (critical task panicked); respawning...");
+            let running = self.nodes.remove(idx);
+            let stopped = match running {
+                NodeSlot::Running(tester) => tester.stop().await?,
+                NodeSlot::Suspended(_) => unreachable!("filtered to running above"),
+            };
+            let restarted = stopped.start().await?;
+            self.nodes
+                .insert(idx, NodeSlot::Running(Box::new(restarted)));
+        }
+        Ok(count)
+    }
+
     pub async fn start_node_with_overrides(
         &mut self,
         index: usize,
@@ -400,7 +396,7 @@ impl MultiNodeTester {
     /// Waits for the Raft cluster to form with a single elected leader
     /// Returns the index of the leader node
     pub async fn wait_for_raft_cluster_formation(
-        &self,
+        &mut self,
         timeout: Duration,
     ) -> anyhow::Result<usize> {
         let node_indices = self.all_node_indices();
@@ -410,7 +406,7 @@ impl MultiNodeTester {
 
     /// Same as `wait_for_raft_cluster_formation`, but ignores suspended nodes.
     pub async fn wait_for_active_raft_cluster_formation(
-        &self,
+        &mut self,
         timeout: Duration,
     ) -> anyhow::Result<usize> {
         let node_indices = self.active_node_indices();
@@ -420,7 +416,7 @@ impl MultiNodeTester {
 
     /// Same as `wait_for_raft_cluster_formation`, but only considers selected nodes.
     pub async fn wait_for_raft_cluster_formation_among(
-        &self,
+        &mut self,
         node_indices: &[usize],
         timeout: Duration,
     ) -> anyhow::Result<usize> {
@@ -428,51 +424,34 @@ impl MultiNodeTester {
             .await
     }
 
-    pub async fn wait_for_active_last_applied_index_convergence(
+    /// Waits for all currently-running nodes to expose `block_number` via their L2 RPC.
+    pub async fn wait_for_active_l2_block(
         &self,
-        min_index: u64,
+        block_number: u64,
         timeout: Duration,
-    ) -> anyhow::Result<u64> {
-        let deadline = Instant::now() + timeout;
-        let mut last_summary = String::new();
-
-        while Instant::now() < deadline {
-            let cluster_state = ClusterState::collect_active(&self.nodes).await;
-            let summary = cluster_state.summary();
-
-            if summary != last_summary {
-                tracing::info!(
-                    "raft last_applied convergence check (min_index={min_index}): {summary}"
-                );
-                last_summary = summary;
-            }
-
-            if cluster_state.all_have_same_last_applied_index_at_or_above(min_index) {
-                let last_applied = cluster_state
-                    .agreed_last_applied_index()
-                    .expect("checked above");
-                tracing::info!("raft last_applied converged: {last_applied}");
-                return Ok(last_applied);
-            }
-
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-
-        let final_state = ClusterState::collect_active(&self.nodes).await;
-
-        tracing::error!(
-            "failed to converge raft last_applied index (min_index={min_index}): {:?}",
-            final_state.nodes
+    ) -> anyhow::Result<()> {
+        let active_nodes: Vec<&Tester> = self
+            .nodes
+            .iter()
+            .filter_map(|slot| slot.running())
+            .collect();
+        let join_all = futures::future::try_join_all(
+            active_nodes
+                .iter()
+                .map(|node| node.l2_zk_provider.wait_for_block(block_number)),
         );
-
-        anyhow::bail!(
-            "timed out waiting for active nodes to converge on last_applied_index >= {min_index}: {}",
-            final_state.summary()
-        )
+        tokio::time::timeout(timeout, join_all)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "timed out waiting for all active nodes to reach L2 block {block_number}"
+                )
+            })?
+            .map(|_| ())
     }
 
     async fn wait_for_raft_cluster_formation_inner(
-        &self,
+        &mut self,
         node_indices: &[usize],
         timeout: Duration,
     ) -> anyhow::Result<usize> {
@@ -488,10 +467,14 @@ impl MultiNodeTester {
             );
         }
 
-        let deadline = Instant::now() + timeout;
+        let mut deadline = Instant::now() + timeout;
         let mut last_summary = String::new();
 
         while Instant::now() < deadline {
+            let respawned = self.respawn_crashed_running_nodes().await?;
+            if respawned > 0 {
+                deadline = deadline.max(Instant::now() + RESPAWN_GRACE);
+            }
             let cluster_state =
                 ClusterState::collect_indices(&self.nodes, node_indices.iter().copied()).await;
             let summary = cluster_state.summary();
