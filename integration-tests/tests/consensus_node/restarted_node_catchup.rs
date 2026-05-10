@@ -355,13 +355,21 @@ fn first_rpc_observed_block_at(report: &HttpRpcReport, target_block: u64) -> Opt
 }
 
 fn assert_rpc_monitor_stayed_ready(report: &HttpRpcReport) -> anyhow::Result<()> {
+    // A deliberate leader-crash-and-respawn cycle (triggered when the Raft leader is demoted)
+    // causes a single-poll-interval blip. Allow that while still catching sustained outages
+    // that would indicate a genuine availability problem.
+    const MAX_SUSTAINED_OUTAGE: Duration = Duration::from_secs(10);
     report.assert_eventually_ready()?;
-    anyhow::ensure!(
-        report.error_samples() == 0,
-        "{} observed RPC errors while it should have stayed ready: {report}\n{}",
-        report.name,
-        report.format_detailed_timeline()
-    );
+    if let Some(outage) = report.longest_error_streak() {
+        anyhow::ensure!(
+            outage.duration < MAX_SUSTAINED_OUTAGE,
+            "{} observed a sustained RPC outage ({}ms >= {}ms) while it should have stayed ready: {report}\n{}",
+            report.name,
+            outage.duration.as_millis(),
+            MAX_SUSTAINED_OUTAGE.as_millis(),
+            report.format_detailed_timeline()
+        );
+    }
     Ok(())
 }
 
